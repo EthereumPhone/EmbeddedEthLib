@@ -1,0 +1,51 @@
+@IMPORT@
+
+/-! Cortex-M33 SHA-256 benchmark entry (not part of EthLib), built by `sha256/build.sh first-fast|first-spec`.
+
+It measures the first hashes of a run one by one, to separate a one-time cost from the cost per hash.
+Eight 3-byte messages are loaded through `pq_load` before the first mark, each its own exclusive `ByteArray`, as the
+first message of `ShaBench.lean.in` is, and segment `k -> k+1` (`pq_mark`) holds the `k`-th hash. Separate messages
+keep the compiler from merging the eight calls into one. Reports 1 to 8 are the eight digests, all the digest of the
+same 3 bytes. -/
+
+open EthLib.Cryptography.Hash
+
+@[extern "pq_mark"] opaque mark (k : UInt32) : BaseIO Unit
+@[extern "pq_load"] opaque load (off len : UInt32) : BaseIO ByteArray
+@[extern "pq_report_bytes"] opaque reportBytes (tag : UInt32) (b : @& ByteArray) : BaseIO Unit
+
+@[export lean_fw_main]
+def fwMain (_ : Unit) : BaseIO Unit := do
+  let a1 ← load 0 3
+  let a2 ← load 0 3
+  let a3 ← load 0 3
+  let a4 ← load 0 3
+  let a5 ← load 0 3
+  let a6 ← load 0 3
+  let a7 ← load 0 3
+  let a8 ← load 0 3
+  mark 1
+  let d1 := Sha256.hash a1
+  mark 2
+  let d2 := Sha256.hash a2
+  mark 3
+  let d3 := Sha256.hash a3
+  mark 4
+  let d4 := Sha256.hash a4
+  mark 5
+  let d5 := Sha256.hash a5
+  mark 6
+  let d6 := Sha256.hash a6
+  mark 7
+  let d7 := Sha256.hash a7
+  mark 8
+  let d8 := Sha256.hash a8
+  mark 9
+  reportBytes 1 d1
+  reportBytes 2 d2
+  reportBytes 3 d3
+  reportBytes 4 d4
+  reportBytes 5 d5
+  reportBytes 6 d6
+  reportBytes 7 d7
+  reportBytes 8 d8

@@ -14,7 +14,7 @@ The benchmark entry points declare `@[extern]` I/O hooks (`pq_mark`, `pq_mode`, 
 | `runtime/link_qemu.ld` | QEMU `mps2-an505` memory map |
 | `gen_core.sh` | writes `runtime/core/*.c`, the C of the seven Lean core (`Init`) modules the EthLib C calls, from the toolchain's own sources with `lean -c` |
 | `sphincs/` | the leanSPHINCS benchmark: `SphincsBench.lean` (entry), `bench_io.c` (inputs, marks, reports, optional Keccak call counter and per-segment arena peaks), `genvec.py` (embeds the known answers of `tests/cryptography/sphincs`), `build.sh` |
-| `sha256/` | the SHA-256 benchmarks: `ShaBench.lean.in` and `ShaInto.lean`, `build.sh fast|spec|into`, and `ref.c`, a plain C SHA-256 for comparison |
+| `sha256/` | the SHA-256 benchmarks: `ShaBench.lean.in`, `ShaInto.lean` and `ShaFirst.lean.in`, `build.sh fast|spec|into|first-fast|first-spec`, and `ref.c`, a plain C SHA-256 for comparison |
 | `tools/` | `count_run.sh` and `count_seg.py` (exact instruction counts per segment from a QEMU trace), `count.py` (one total), `prof.py` (instructions per function), `closure.py` (the EthLib modules a Lean file imports), `hashcount.py` (hash-call model of the specification's leanSPHINCS) |
 | `board/` | the STM32U585 SRAM runner: `run_on_board.sh`, `startup.c`, `bench.h`, `link_sram.ld`, the calibration program `calib/calib.c`, and `sha/ref_board.c`, the C SHA-256 on the board |
 | `silicon/` | the board build of the benchmarks: `build.sh`, `rt_silicon.c`, `bench_io_silicon.c`, `pqx.h`, `decode.py`, `link_qemu_twin.ld`, `clkctl/clkwrap.c` |
@@ -108,6 +108,12 @@ embedded/tools/count_run.sh out/sha_into.elf
 Segments 1, 5 and 9 hold one hash of the 3-, 64- and 1,072-byte message, and segments 3, 7 and 11 eleven hashes of the same message.
 The instructions per hash are the difference of the two, divided by 10, as for the C reference below.
 `R 1` and `R 2` are the digest of the 3-byte message, `R 3` and `R 4` of the 64-byte message, and `R 5` and `R 6` of the 1,072-byte message.
+
+`first-fast` and `first-spec` build `ShaFirst.lean.in`, which hashes eight 3-byte messages, one per segment, to show what the first hash of a run costs more than the others.
+In the specification, the first call of `compress` builds `K.toList`, a closed term that Lean 4.35 compiles as a once-cell (`lean_obj_once`): 64 list cells, kept for the rest of the run (`live_after_op=1024B` in the arena report).
+So the first hash of a run is 20,162 instructions and every later one 13,810 to 13,814; the zero-allocation form costs 3,293 for each of the eight.
+A per-hash figure should therefore come from hashes after the first, or from a run that hashes once before its first mark.
+The difference of an 11-hash and a 1-hash segment alone does not remove it when the 1-hash segment holds the first hash: it subtracts a tenth of the one-time cost.
 
 The C reference, `ref.c`, hashes `NHASH` 3-byte messages; the instructions per hash are the difference of two counts divided by 10:
 
