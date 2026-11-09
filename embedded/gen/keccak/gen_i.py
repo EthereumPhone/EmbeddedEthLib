@@ -102,12 +102,6 @@ def keccakPI (S : StateI) : StateI :=
 @[inline] def ilvE64 (v : UInt64) : UInt32 := ilvE v.toUInt32 (v >>> 32).toUInt32
 @[inline] def ilvO64 (v : UInt64) : UInt32 := ilvO v.toUInt32 (v >>> 32).toUInt32
 @[inline] def dlv64 (e o : UInt32) : UInt64 := (dlvLo e o).toUInt64 ||| ((dlvHi e o).toUInt64 <<< 32)
-
-/-- Keccak-f[1600] through the interleaved form: convert 25 lanes in, permute, convert 25 out. -/
-def keccakFI (A : State) : State :=
-  let S : StateI := ⟨""" + ", ".join(f"ilvE64 A.a{k}, ilvO64 A.a{k}" for k in range(25)) + """⟩
-  let R := keccakPI S
-  ⟨""" + ", ".join(f"dlv64 R.e{k} R.o{k}" for k in range(25)) + """⟩
 """)
 absorb = ",\n      ".join(
     f"S.e{k} ^^^ ilvE (lane32 bytes p h q rfl {8*k} (by decide)) (lane32 bytes p h q rfl {8*k+4} (by decide)), "
