@@ -14,6 +14,8 @@ public import EthLib.Cryptography.Sphincs.Verify
 public import EthLib.Cryptography.Sphincs.Serialization
 public import EthLib.Cryptography.Sphincs.KeyGen
 public import EthLib.Cryptography.Sphincs.Sign
+-- The `@[csimp]` that compiles `sign` as `signFast`: every tree built once, each level packed.
+public import EthLib.Cryptography.Sphincs.FastEq
 
 /-!
 # leanSPHINCS

@@ -5,6 +5,8 @@ public import EthLib.Cryptography.Sphincs.Constants
 public import EthLib.Cryptography.Sphincs.Errors
 public import EthLib.Cryptography.Sphincs.KeyGen
 public import EthLib.Cryptography.Sphincs.Sign
+-- The `@[csimp]` that compiles `sign` as `signFast`, every tree built once.
+public import EthLib.Cryptography.Sphincs.FastEq
 public import EthLib.Cryptography.Sphincs.Serialization
 
 /-!
