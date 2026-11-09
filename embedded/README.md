@@ -14,7 +14,7 @@ The benchmark entry points declare `@[extern]` I/O hooks (`pq_mark`, `pq_mode`, 
 | `runtime/link_qemu.ld` | QEMU `mps2-an505` memory map |
 | `gen_core.sh` | writes `runtime/core/*.c`, the C of the seven Lean core (`Init`) modules the EthLib C calls, from the toolchain's own sources with `lean -c` |
 | `sphincs/` | the leanSPHINCS benchmark: `SphincsBench.lean` (entry), `bench_io.c` (inputs, marks, reports, optional Keccak call counter and per-segment arena peaks), `genvec.py` (embeds the known answers of `tests/cryptography/sphincs`), `build.sh` |
-| `sha256/` | the SHA-256 benchmark: `ShaBench.lean.in`, `build.sh fast|spec`, and `ref.c`, a plain C SHA-256 for comparison |
+| `sha256/` | the SHA-256 benchmarks: `ShaBench.lean.in` and `ShaInto.lean`, `build.sh fast|spec|into`, and `ref.c`, a plain C SHA-256 for comparison |
 | `tools/` | `count_run.sh` and `count_seg.py` (exact instruction counts per segment from a QEMU trace), `count.py` (one total), `prof.py` (instructions per function), `closure.py` (the EthLib modules a Lean file imports), `hashcount.py` (hash-call model of the specification's leanSPHINCS) |
 | `board/` | the STM32U585 SRAM runner: `run_on_board.sh`, `startup.c`, `bench.h`, `link_sram.ld`, the calibration program `calib/calib.c`, and `sha/ref_board.c`, the C SHA-256 on the board |
 | `silicon/` | the board build of the benchmarks: `build.sh`, `rt_silicon.c`, `bench_io_silicon.c`, `pqx.h`, `decode.py`, `link_qemu_twin.ld`, `clkctl/clkwrap.c` |
@@ -57,11 +57,17 @@ R 9 0
 `R 1 1` is the known-answer signature verifying, `R 2 0` the same signature with its last bit flipped failing, and `R 3` to `R 8` are digests of the isolated pieces.
 After them, `rt.c` prints the stack depth and the arena report (`nonzero_in_freed=0` means every freed byte was wiped).
 
+QEMU exits with status 0 after a complete run.
+After a `HALT code n` (an exhausted arena, a Lean panic, a fault) it exits with the low byte of `n`, or 1 if that byte is 0 (`runtime/sh_exit.h`).
+On AArch32, semihosting `SYS_EXIT` takes the reason code itself in R1, so the runtime exits with `SYS_EXIT` and `ADP_Stopped_ApplicationExit` on success and with `SYS_EXIT_EXTENDED`, which carries a code, otherwise.
+
 Exact instruction counts per segment (the segments are the `mark` calls in `SphincsBench.lean`):
 
 ```bash
 embedded/tools/count_run.sh out/v.elf
 ```
+
+`count_run.sh` exits with QEMU's status, so a run that halted does not pass for a measurement.
 
 Signing and key generation execute billions of instructions, too many to trace.
 Build them with the instruction timer and run QEMU in instruction-counting mode, where one tick is 50 instructions:
@@ -91,6 +97,17 @@ embedded/tools/count_run.sh out/sha_spec.elf
 `spec` imports only `EthLib.Cryptography.Hash.Sha256.Spec`, so the same source calls the compiled specification.
 Segment 1 hashes 3 bytes, segment 2 64 bytes, segment 3 1,072 bytes, and segment 4 ten 64-byte messages.
 Both builds must print the same four `R` lines; Python's `hashlib` gives the same digests for the same bytes of the known-answer blob.
+
+`into` builds `ShaInto.lean`, which calls `Sha256.Zsf.hashInto` with one reused, exclusive 32-byte buffer, so no hash allocates:
+
+```bash
+embedded/sha256/build.sh into embedded/runtime/link_qemu.ld out/sha_into.elf
+embedded/tools/count_run.sh out/sha_into.elf
+```
+
+Segments 1, 5 and 9 hold one hash of the 3-, 64- and 1,072-byte message, and segments 3, 7 and 11 eleven hashes of the same message.
+The instructions per hash are the difference of the two, divided by 10, as for the C reference below.
+`R 1` and `R 2` are the digest of the 3-byte message, `R 3` and `R 4` of the 64-byte message, and `R 5` and `R 6` of the 1,072-byte message.
 
 The C reference, `ref.c`, hashes `NHASH` 3-byte messages; the instructions per hash are the difference of two counts divided by 10:
 
@@ -136,8 +153,10 @@ embedded/board/run_on_board.sh out/m0.elf 0x30000000 256 600
 python3 embedded/silicon/decode.py out/m0.elf.openocd.log
 ```
 
-`BUILDER=embedded/silicon/build.sh embedded/sha256/build.sh fast embedded/board/link_sram.ld out/sha.elf` builds the SHA-256 benchmark for the board the same way.
+`BUILDER=embedded/silicon/build.sh embedded/sha256/build.sh fast embedded/board/link_sram.ld out/sha.elf` builds the SHA-256 benchmark for the board the same way, and so do `spec` and `into`.
 The QEMU twin of a board image (`silicon/link_qemu_twin.ld` with `-DQEMU -DBENCH_RESULTS_ADDR=0x38000000u`) runs the same sources under QEMU, for instruction counts.
+It prints nothing, so its exit status is its result: 0 when `bench_run` returned, the halt code after `bench_halt`, and 250 (0xFA) after a fault.
+The board build never uses semihosting.
 
 What was learned building the runner:
 
