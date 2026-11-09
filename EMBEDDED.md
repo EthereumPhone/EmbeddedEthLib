@@ -17,6 +17,7 @@ Two consequences shaped the layout:
 
 - Where a specification module compiles its own callers, the fast form has to be installed for those callers too. So the fork moves the specification into a `Spec` module, byte-identical to upstream's file, and turns the old module name into an aggregator that re-exports the specification and the proof. `EthLib.Cryptography.Hash.Sha256`, `EthLib.Cryptography.Hash.Keccak` and `EthLib.Base.Bytes` are such aggregators. Every module that imported them before now compiles the fast forms, without an import change.
 - A function compiled inside a module that the proof has to import gets a copy compiled after the proof, installed by a `rfl` csimp. For example `TweakableHash.lean` compiles `th`, and `trunc_eq` is proved in a module that imports `TweakableHash.lean`, so `thFast`, the same body compiled after `trunc_eq`, replaces `th`. The generated C of a consumer module was checked each time to confirm that it calls the fast symbol.
+In the generated C of the whole library, no module outside the SHA-256, Keccak and byte modules calls the specification's `Sha256.hash`, `keccak256` or `readBytes`: 20 files call `Zsf.hashZ`, 47 call `Keccak.Fast.keccak256IG` and 6 call `readBytesP`.
 
 ## What was slow, and why
 
@@ -148,6 +149,7 @@ Memory, from the runtime's report (arena peak of live bytes, and stack depth):
 | key generation, arena peak | 20,544 B | 21,592 B |
 | stack, verify / sign / key generation | 13,720 / 15,080 / 14,448 B | 13,812 / 14,940 / 14,540 B |
 | closed terms built at initialisation | 1,160 B | 2,240 B |
+| instructions before the first mark (initialisation and input loading) | 1,726,440 | 1,842,386 |
 | `.text` of the verify benchmark | 105,476 B | 133,276 B |
 
 The whole-operation peak of signing is `encodeSignature`'s, which this fork does not change: it flattens the boxed signature, about 52 KB over the signature itself.
@@ -255,9 +257,9 @@ At the head of this fork:
 - `lake exe check-decls` checks 82,680 declarations: 27 findings, all listed in the baseline, none new, none stale. `scripts/test_check_decls.sh` passes.
 - `lake env leanchecker` replays every new or changed module (28 modules, at most 10 s each).
 - `embedded/hosttest` passes 685 vectors with 1,340 checks: every SHA-256 vector through six paths, every Keccak-256, Keccak-512 and Keccak-f[1600] vector, and every leanSPHINCS key generation, signing and verification vector of `tests/cryptography`.
-- `scripts/soundness_facts.py --check`, `scripts/check_layers.py`, `scripts/check_docstrings.py`, `scripts/check_fork_cap.py` and `lake exe gen-bindings --check` pass.
+- `scripts/test_module_system.sh`, `scripts/soundness_facts.py --check`, `scripts/check_layers.py`, `scripts/check_docstrings.py`, `scripts/check_fork_cap.py` and `lake exe gen-bindings --check` pass.
 
 Not yet clean, and not run:
 
-- Upstream's layout gate, `scripts/check_lean_layout.py --all --rule wrap`, reports 113 findings, all in comments of the fork's new library modules: a sentence that wraps onto the next line, where upstream's style wants one sentence per line. Against upstream's commit (`--base 0b028a98`) it also reports long lines, 348 findings in all. Fixing them changes only comments and line breaks, and CI would fail on them until then.
+- Upstream's layout gate passes on the whole tree (`scripts/check_lean_layout.py --all --rule wrap`). Its check of the lines a pull request changes (`--base 0b028a98`) still reports 279 findings in the fork's new files: 272 lines longer than 100 characters, most of them generated code and proof steps, and 7 comment lines with no blank line between two sentences.
 - The Python bindings' tests (`pytest`), the parity tests and the release checks of upstream's CI were not run.

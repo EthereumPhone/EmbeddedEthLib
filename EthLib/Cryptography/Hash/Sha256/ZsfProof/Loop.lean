@@ -5,8 +5,7 @@ public import EthLib.Cryptography.Hash.Sha256.ZsfProof.Digest
 public import EthLib.Cryptography.Hash.Sha256.ZsfProof.Tail
 public import EthLib.Cryptography.Hash.Sha256.ZsfProof.Step
 
-/-! Loop: the simulation. From a block boundary `s` of `m`, with hash value `addS H S`, `zloop`
-    with enough fuel is the digest of EthLib's chain over the remaining `count` blocks of `pad m`. -/
+/-! Loop: the simulation. From a block boundary `s` of `m`, with hash value `addS H S`, `zloop` with enough fuel is the digest of EthLib's chain over the remaining `count` blocks of `pad m`. -/
 
 public section
 

@@ -5,14 +5,10 @@ public import EthLib.Cryptography.Hash.Keccak.Fast
 /-! Proofs that the fast forms equal the spec, and the `@[csimp]` lemmas that install them.
 
 - `keccakF1 = keccakF`, `keccakF2 = keccakF`; `@[csimp] keccakF = keccakF2`.
-- `padF msg = pad RATE msg`, `absorbU = Internal.absorbBlocks` (arrays below `USize.size`), and
-  `keccak256U = keccak256` (no longer a `@[csimp]`: `FastProofI` installs the faster, also proved,
-  bit-interleaved `keccak256IG` for `keccak256` instead).
-- `@[csimp]` copies of `keccak512`, `Hasher.absorb`, `Hasher.digest` (all `rfl`), recompiled here so
-  their `keccakF` call sites become `keccakF2`.
+- `padF msg = pad RATE msg`, `absorbU = Internal.absorbBlocks` (arrays below `USize.size`), and `keccak256U = keccak256` (no longer a `@[csimp]`: `FastProofI` installs the faster, also proved, bit-interleaved `keccak256IG` for `keccak256` instead).
+- `@[csimp]` copies of `keccak512`, `Hasher.absorb`, `Hasher.digest` (all `rfl`), recompiled here so their `keccakF` call sites become `keccakF2`.
 
-A csimp lemma rewrites only code compiled after it is in scope, so a consumer must import this
-module (as `Sphincs.TweakableHash` does). -/
+A csimp lemma rewrites only code compiled after it is in scope, so a consumer must import this module (as `Sphincs.TweakableHash` does). -/
 
 @[expose] public section
 
@@ -97,9 +93,7 @@ theorem keccakF2_eq : keccakF2 = keccakF := by
 
 /-! ## A proved in-place sponge for Keccak-256
 
-`absorbU` reads each lane with eight `ByteArray.uget`s at `USize` offsets, in the byte order of
-`Internal.laneAt`, so the proof needs only that each read is `byteAt`. The index `q + c` is the
-true offset `p + c` when the array is shorter than `USize.size`, which `keccak256U` tests once. -/
+`absorbU` reads each lane with eight `ByteArray.uget`s at `USize` offsets, in the byte order of `Internal.laneAt`, so the proof needs only that each read is `byteAt`. The index `q + c` is the true offset `p + c` when the array is shorter than `USize.size`, which `keccak256U` tests once. -/
 
 /-- Byte `c` of the block at `p`, read in place, as a lane. -/
 @[inline] def rdU (bytes : @& ByteArray) (p : Nat) (h : p + 136 ≤ bytes.size) (q : USize)
@@ -259,9 +253,7 @@ theorem padF_eq (msg : ByteArray) : padF msg = pad RATE msg := by
 
 /-- Keccak-256 with the two-rounds-per-call permutation and in-place lane reads.
 
-The bound is a literal that is a scalar `Nat` on a 32-bit target (`2^31 - 1`), so the test is one
-comparison; `USize.size` itself is `2^32` there, a big number. A message that long cannot be in
-memory on the M33; on a 64-bit host the `else` branch is the spec, so the result is the same. -/
+The bound is a literal that is a scalar `Nat` on a 32-bit target (`2^31 - 1`), so the test is one comparison; `USize.size` itself is `2^32` there, a big number. A message that long cannot be in memory on the M33; on a 64-bit host the `else` branch is the spec, so the result is the same. -/
 def keccak256U (msg : ByteArray) : Vector UInt8 DIGEST_LEN :=
   let padded := padF msg
   if hs : padded.size < 2147483647 then
@@ -323,17 +315,13 @@ theorem keccak256U_eq : keccak256U = keccak256 := by
   · rw [absorbU_eq, keccakF2_eq, squeezeF_eq, padF_eq]; rfl
   · rfl
 
-/-- The proved in-place sponge. Not installed: `FastProofI.keccak256_eq_keccak256IG` is the
-`@[csimp]` for `keccak256`. -/
+/-- The proved in-place sponge. Not installed: `FastProofI.keccak256_eq_keccak256IG` is the `@[csimp]` for `keccak256`. -/
 theorem keccak256_eq_keccak256U : keccak256 = keccak256U := keccak256U_eq.symm
 
 
 /-! ### The other wrappers compiled inside `Keccak.lean`
 
-`keccak512`, `Hasher.absorb` and `Hasher.digest` are compiled in the spec module, where the
-`keccakF` csimp is not in scope, so their own code keeps the spec permutation. Each copy below has
-the same body, compiled here after `keccakF_eq_keccakF2`, so its `keccakF` becomes `keccakF2`; the
-csimp lemmas, all `rfl`, send every later call to the copy. -/
+`keccak512`, `Hasher.absorb` and `Hasher.digest` are compiled in the spec module, where the `keccakF` csimp is not in scope, so their own code keeps the spec permutation. Each copy below has the same body, compiled here after `keccakF_eq_keccakF2`, so its `keccakF` becomes `keccakF2`; the csimp lemmas, all `rfl`, send every later call to the copy. -/
 
 /-- `keccak512`, recompiled with the fast permutation. -/
 def keccak512R (msg : ByteArray) : Vector UInt8 DIGEST_LEN_512 :=

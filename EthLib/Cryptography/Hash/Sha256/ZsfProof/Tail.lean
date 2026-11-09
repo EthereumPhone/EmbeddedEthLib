@@ -2,8 +2,7 @@ module
 
 public import EthLib.Cryptography.Hash.Sha256.ZsfProof.Pad
 
-/-! Tail: the last one or two blocks of `pad m`, from a block boundary `s` with `r = m.size - s < 64`
-    message bytes left, are the windows `zloop` builds from `tailWord` and the length words. -/
+/-! Tail: the last one or two blocks of `pad m`, from a block boundary `s` with `r = m.size - s < 64` message bytes left, are the windows `zloop` builds from `tailWord` and the length words. -/
 
 public section
 
@@ -12,8 +11,7 @@ open EthLib.Cryptography.Hash.Sha256
 open EthLib.Cryptography.Hash.Sha256.Zsf
 
 
-/-- The two length words are the last eight bytes of `lengthBytes`, big-endian
-    (the only genuine bit-vector identity of the proof). -/
+/-- The two length words are the last eight bytes of `lengthBytes`, big-endian (the only genuine bit-vector identity of the proof). -/
 theorem big32_len_hi (x : UInt64) :
     EthLib.Cryptography.Hash.Sha256.big32 (x >>> 56).toUInt8 (x >>> 48).toUInt8 (x >>> 40).toUInt8 (x >>> 32).toUInt8 =
       (x >>> 32).toUInt32 := by

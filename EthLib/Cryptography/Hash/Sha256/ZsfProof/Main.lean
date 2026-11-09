@@ -58,9 +58,7 @@ def hash32Z (message : ByteArray) : Vector UInt8 32 :=
   ⟨(EthLib.Cryptography.Hash.Sha256.Zsf.hashZ message).data, by rw [hashZ_eq]; exact (hash32 message).2⟩
 
 /-- Two `Vector.mk`s over the data of equal byte arrays are equal, stated over free `a b`.
-Observed (cause not isolated): a `simp`/`Vector.ext`/`getElem` proof of `hash32_eq_hash32Z` is
-accepted by the elaboration-time kernel in milliseconds but did not finish under `leanchecker`
-replay (> 600 s); the term proof through this lemma replays in about 0 ms. -/
+Observed (cause not isolated): a `simp`/`Vector.ext`/`getElem` proof of `hash32_eq_hash32Z` is accepted by the elaboration-time kernel in milliseconds but did not finish under `leanchecker` replay (> 600 s); the term proof through this lemma replays in about 0 ms. -/
 private theorem vector_mk_data_eq (a b : ByteArray) (h : a = b) (pa : a.data.size = 32)
     (pb : b.data.size = 32) : (⟨a.data, pa⟩ : Vector UInt8 32) = ⟨b.data, pb⟩ := by
   subst h
@@ -74,8 +72,7 @@ end EthLib.Cryptography.Hash.Sha256.ZsfProof
 
 namespace EthLib.Cryptography.Hash
 
-/-- The public `sha256` is `@[inline]`; its saved body calls `hash`, compiled before
-`hash_eq_hashZ` existed, so it gets its own substitution. -/
+/-- The public `sha256` is `@[inline]`; its saved body calls `hash`, compiled before `hash_eq_hashZ` existed, so it gets its own substitution. -/
 @[csimp] theorem sha256_eq_hashZ : @sha256 = @EthLib.Cryptography.Hash.Sha256.Zsf.hashZ := by
   funext m
   exact (EthLib.Cryptography.Hash.Sha256.ZsfProof.hashZ_eq m).symm
@@ -84,9 +81,7 @@ end EthLib.Cryptography.Hash
 
 namespace EthLib.Cryptography.Hash.Sha256.Zsf
 
-/-- Public form of the correctness theorem, next to `Zsf.hashInto`: whatever buffer the caller
-passes, `hashInto` returns the SHA-256 digest of the message. A caller that owns an exclusive
-32-byte buffer gets the digest written into it without allocation. -/
+/-- Public form of the correctness theorem, next to `Zsf.hashInto`: whatever buffer the caller passes, `hashInto` returns the SHA-256 digest of the message. A caller that owns an exclusive 32-byte buffer gets the digest written into it without allocation. -/
 theorem hashInto_eq (m out : ByteArray) : hashInto m out = Sha256.hash m :=
   ZsfProof.hashInto_eq m out
 

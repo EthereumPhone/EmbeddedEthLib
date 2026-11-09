@@ -5,27 +5,15 @@ public import EthLib.Cryptography.Sphincs.Sign
 /-!
 # Executable leanSPHINCS signing and key generation without subtree recomputation
 
-`Merkle.path` builds every sibling subtree on its own, and `Merkle.root` builds the tree again, so
-the specification's `sign` evaluates 3,069 one-time-key leaves where 1,536 suffice, and every FORS
-leaf twice. The specification is generic over a monad so that a proof can count oracle queries;
-"compute once" and "recompute" agree only for the pure instance, `hashId` in `Id`.
+`Merkle.path` builds every sibling subtree on its own, and `Merkle.root` builds the tree again, so the specification's `sign` evaluates 3,069 one-time-key leaves where 1,536 suffice, and every FORS leaf twice. The specification is generic over a monad so that a proof can count oracle queries; "compute once" and "recompute" agree only for the pure instance, `hashId` in `Id`.
 
 This module targets that pure instance only:
 
-- `Merkle.Fast.rootAndPath` builds a tree level by level, once, and returns its root and the path
-  of one leaf. `keyGenFast` uses it.
-- `Merkle.Packed.levels` keeps every level of a tree packed in `ByteArray`s, 16 bytes a digest
-  instead of a boxed `Vector UInt8 16` (about 80 bytes on a 32-bit target). It holds the top tree,
-  whose leaf is not known when its root is needed (`PK.root` feeds `H_msg`, which picks the leaf):
+- `Merkle.Fast.rootAndPath` builds a tree level by level, once, and returns its root and the path of one leaf. `keyGenFast` uses it.
+- `Merkle.Packed.levels` keeps every level of a tree packed in `ByteArray`s, 16 bytes a digest instead of a boxed `Vector UInt8 16` (about 80 bytes on a 32-bit target). It holds the top tree, whose leaf is not known when its root is needed (`PK.root` feeds `H_msg`, which picks the leaf):
   2,047 digests in 32,752 bytes.
-- `treeRootAndPathDF` and `forsOpenAndRootDF` build a tree whose leaf is known depth first: the
-  specification's own `path`, whose sibling subtrees cover every leaf but the key's, then the climb
-  from that leaf. Every leaf and node is computed once, and at most one node per level is held.
-- `signFast` is `sign` with every tree built once and the packed top tree released before FORS
-  (`signBelowTop` is `@[noinline]` so the compiler cannot sink the top path's read past it). All
-  other hash calls (key expansion, `PRF_msg`, `H_msg`, the FORS opening secrets, the WOTS+C counter
-  search and chains, `T_k`) are the specification's own functions at `hashId`; the FORS leaf under
-  each opening is `F` of the opening's secret, so its `PRF` call is not repeated.
+- `treeRootAndPathDF` and `forsOpenAndRootDF` build a tree whose leaf is known depth first: the specification's own `path`, whose sibling subtrees cover every leaf but the key's, then the climb from that leaf. Every leaf and node is computed once, and at most one node per level is held.
+- `signFast` is `sign` with every tree built once and the packed top tree released before FORS (`signBelowTop` is `@[noinline]` so the compiler cannot sink the top path's read past it). All other hash calls (key expansion, `PRF_msg`, `H_msg`, the FORS opening secrets, the WOTS+C counter search and chains, `T_k`) are the specification's own functions at `hashId`; the FORS leaf under each opening is `F` of the opening's secret, so its `PRF` call is not repeated.
 
 `FastEq.lean` proves `sign = signFast` and `keyGen = keyGenFast`.
 
@@ -60,17 +48,14 @@ termination_by n - j
     Array α :=
   parentLevelGo hash z prev n 0 (Array.mkEmpty n)
 
-/-- Climb `k` levels from level `z` (`cur`, `2^k` nodes), pushing the sibling of the ancestor of
-leaf `e` at each level onto `acc`. Returns the root and the siblings, level `z` first. -/
+/-- Climb `k` levels from level `z` (`cur`, `2^k` nodes), pushing the sibling of the ancestor of leaf `e` at each level onto `acc`. Returns the root and the siblings, level `z` first. -/
 def climbLevels (hash : Nat → Nat → α → α → α) (e : Nat) :
     (k z : Nat) → (cur acc : Array α) → α × Array α
   | 0, _, cur, acc => (cur[0]!, acc)
   | k + 1, z, cur, acc =>
     climbLevels hash e k (z + 1) (parentLevel hash z cur (2 ^ k)) (acc.push cur[(e >>> z) ^^^ 1]!)
 
-/-- The root of the tree of height `h` and the path of leaf `e`, from the leaf up, with every leaf
-and node computed once. Equals `(Merkle.root hash leaves h, Merkle.path hash leaves h e)` in `Id`
-for `e < 2^h`. -/
+/-- The root of the tree of height `h` and the path of leaf `e`, from the leaf up, with every leaf and node computed once. Equals `(Merkle.root hash leaves h, Merkle.path hash leaves h e)` in `Id` for `e < 2^h`. -/
 def rootAndPath (hash : Nat → Nat → α → α → α) (leaves : Nat → α) (h e : Nat) : α × Vector α h :=
   let (r, p) := climbLevels hash e h 0 (leafLevel leaves (2 ^ h)) (Array.mkEmpty h)
   (r, Vector.ofFn fun i => p[i.val]!)
@@ -97,8 +82,7 @@ end EthLib.Cryptography.Merkle.Fast
 
 /-! ## Packed levels
 
-A digest held in an `Array` is a boxed `Vector UInt8 16`: about 80 bytes on a 32-bit target. A
-packed row holds `n` digests of `k` bytes in one `ByteArray` of `k * n` bytes. -/
+A digest held in an `Array` is a boxed `Vector UInt8 16`: about 80 bytes on a 32-bit target. A packed row holds `n` digests of `k` bytes in one `ByteArray` of `k * n` bytes. -/
 
 namespace EthLib.Cryptography.Merkle.Packed
 
@@ -211,8 +195,7 @@ def forsSignAndKey (pkSeed : PkSeed) (prf : Prf Id) (idx : Nat)
 
 /-! ## Bounded memory
 
-A tree whose leaf is known is built depth first: the specification's own `path`, whose sibling
-subtrees cover every leaf but the key's, then the climb from that leaf over the path to the root.
+A tree whose leaf is known is built depth first: the specification's own `path`, whose sibling subtrees cover every leaf but the key's, then the climb from that leaf over the path to the root.
 Every leaf and node is computed once and at most one node per level is held.
 
 The top tree's leaf is not known when its root is needed, so its levels are kept packed. -/
@@ -229,8 +212,7 @@ def treeLevelsPacked (pkSeed : PkSeed) (prf : Prf Id) (layer : Layer) (tree : Na
   Merkle.Packed.levels (nodeHashPure pkSeed layer tree) (leavesPure pkSeed prf layer tree)
     layer.height
 
-/-- The opening of tree `kappa` at leaf `s` and the tree's root, depth first. The leaf `s` is `F` of
-the opening's secret, so its `PRF` call is not repeated. -/
+/-- The opening of tree `kappa` at leaf `s` and the tree's root, depth first. The leaf `s` is `F` of the opening's secret, so its `PRF` call is not repeated. -/
 def forsOpenAndRootDF (pkSeed : PkSeed) (prf : Prf Id) (idx : Nat) (kappa : Fin FORS_TREES)
     (s : Fin (2 ^ FORS_HEIGHT)) : TreeOpening × Digest :=
   let o := Id.run (treeOpen hashId pkSeed prf idx kappa s)
@@ -256,8 +238,7 @@ def signLayerWithPath (pkSeed : PkSeed) (prf : Prf Id) (layer : Layer) (idx : Na
   | some (counter, chainValues) => .ok { counter, chainValues, path }
   | none => .error (.noAdmissibleEncoding layer)
 
-/-- Everything below the top tree, from the digest and the top key's path. A separate function, not
-inlined, so that the packed top tree is released before FORS starts. -/
+/-- Everything below the top tree, from the digest and the top key's path. A separate function, not inlined, so that the packed top tree is released before FORS starts. -/
 @[noinline] def signBelowTop (pkSeed : PkSeed) (secrets : Prf Id) (rho : Randomizer)
     (d : MessageDigest) (tPath : Vector Digest Layer.top.height) : Except SphincsError Signature :=
   let idx := digestIndex d
@@ -278,8 +259,7 @@ inlined, so that the packed top tree is released before FORS starts. -/
   | .error err => .error err
   | .ok top => .ok { randomizer := rho, fors, bottom, middle, top }
 
-/-- `sign`, with every tree built once and bounded memory: the top tree's levels packed (32 KiB),
-every other tree depth first. -/
+/-- `sign`, with every tree built once and bounded memory: the top tree's levels packed (32 KiB), every other tree depth first. -/
 def signFast (sk : SecretKey) (msg : Message) : Except SphincsError Signature :=
   let key := Id.run (expandKey hashId sk.seed)
   let pkSeed := key.pkSeed
@@ -295,8 +275,7 @@ def signFast (sk : SecretKey) (msg : Message) : Except SphincsError Signature :=
     else (treeRootAndPathDF pkSeed secrets .top tKey.tree tKey.leaf).2
   signBelowTop pkSeed secrets rho d tPath
 
-/-- `keyGen` through the level builder. Stock `keyGen` already builds the top tree once, so this
-is a control: same hash calls, same key, only the data structure differs. -/
+/-- `keyGen` through the level builder. Stock `keyGen` already builds the top tree once, so this is a control: same hash calls, same key, only the data structure differs. -/
 def keyGenFast (seed : Seed) : SecretKey × PublicKey :=
   let key := Id.run (expandKey hashId seed)
   let secrets := prf hashId key.pkSeed seed

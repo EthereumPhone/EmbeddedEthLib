@@ -5,21 +5,14 @@ public import EthLib.Cryptography.Sphincs.TweakableHash
 /-!
 # A fast tweakable-hash wrapper for leanSPHINCS, proved equal to the spec
 
-The spec builds each address with six `toByte` calls (`natToBytes`: a `List` of bytes per word, one
-cons cell per byte, Nat divisions), five `Vector` appends, and truncates the hash output with
-`Vector.ofFn` through a closure. Here every such function has a fast twin proved equal to it, and a
-`@[csimp]` lemma installs the twin in all code compiled after this module is imported.
+The spec builds each address with six `toByte` calls (`natToBytes`: a `List` of bytes per word, one cons cell per byte, Nat divisions), five `Vector` appends, and truncates the hash output with `Vector.ofFn` through a closure. Here every such function has a fast twin proved equal to it, and a `@[csimp]` lemma installs the twin in all code compiled after this module is imported.
 
 - `encodeAdrs = encodeAdrsFast`: the 32 address bytes from shifts of the machine words, one array.
 - `trunc = truncFast`: one `Array.extract` into an array of exactly `r` elements.
 - `th = thFast`, `prf = prfR`: copies compiled after the two lemmas above, so they use them.
-- `adrs`, `keyAdrs` and the eight address builders of `Address.lean`: copies compiled after
-  `encodeAdrs = encodeAdrsFast`, because the originals are compiled inside `Address.lean`.
+- `adrs`, `keyAdrs` and the eight address builders of `Address.lean`: copies compiled after `encodeAdrs = encodeAdrsFast`, because the originals are compiled inside `Address.lean`.
 
-A csimp lemma rewrites only code compiled after it is in scope, so `Sphincs/Ots.lean` imports this
-module: `chainStep`, the chains, the Merkle and FORS node hashes and everything above them are
-compiled with the fast forms. Every theorem here is an equality of the spec's own constants, so the
-proofs about the spec are untouched.
+A csimp lemma rewrites only code compiled after it is in scope, so `Sphincs/Ots.lean` imports this module: `chainStep`, the chains, the Merkle and FORS node hashes and everything above them are compiled with the fast forms. Every theorem here is an equality of the spec's own constants, so the proofs about the spec are untouched.
 -/
 
 @[expose] public section
@@ -72,8 +65,7 @@ theorem encodeAdrs_eq : encodeAdrs = encodeAdrsFast := by
 
 /-! ### The address builders of `Address.lean`
 
-They are compiled inside `Address.lean`, before `encodeAdrs_eq` exists, so each gets a copy compiled
-here and a csimp lemma that sends every later call to the copy. -/
+They are compiled inside `Address.lean`, before `encodeAdrs_eq` exists, so each gets a copy compiled here and a csimp lemma that sends every later call to the copy. -/
 
 /-- `adrs`, compiled with `encodeAdrsFast`. -/
 def adrsR (type : AdrsType) (layer : Layer) (tree keyPair word2 word3 : Nat) : Adrs :=
@@ -143,12 +135,9 @@ def adrsFprfR (idx j : Nat) : Adrs := keyAdrsR .forsPrf (OtsKey.ofIndex .bottom 
 
 /-! ## Truncation -/
 
-/-- `Trunc_r` by `Array.extract`: one copy of the first `r` elements into an array of capacity `r`,
-instead of building a new array through a closure.
+/-- `Trunc_r` by `Array.extract`: one copy of the first `r` elements into an array of capacity `r`, instead of building a new array through a closure.
 
-`Array.shrink` would pop the tail in place, but the result would keep the hash output's capacity of
-32 elements. A signature holds about 480 digests, so on a 32-bit target that costs about 31 KB of
-arena while the signature is alive. -/
+`Array.shrink` would pop the tail in place, but the result would keep the hash output's capacity of 32 elements. A signature holds about 480 digests, so on a 32-bit target that costs about 31 KB of arena while the signature is alive. -/
 def truncFast {k : Nat} (r : Nat) (x : Vector UInt8 k) (h : r ≤ k := by decide) : Vector UInt8 r :=
   ⟨x.toArray.extract 0 r, by simp only [Array.size_extract, Vector.size_toArray]; omega⟩
 

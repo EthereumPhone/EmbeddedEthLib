@@ -8,7 +8,5 @@ public import EthLib.Base.Bytes.Fast
 
 The specification is `Bytes/Spec.lean`; every proof reasons about it.
 
-`Bytes/Fast.lean` reads a slice of a buffer in one pass, proves the read equal to `readBytes`, and
-installs it with `@[csimp]`, so compiled code that calls `readBytes` copies the slice once instead
-of copying the whole buffer once per byte.
+`Bytes/Fast.lean` reads a slice of a buffer in one pass, proves the read equal to `readBytes`, and installs it with `@[csimp]`, so compiled code that calls `readBytes` copies the slice once instead of copying the whole buffer once per byte.
 -/

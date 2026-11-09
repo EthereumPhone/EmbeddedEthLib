@@ -2,8 +2,7 @@ module
 
 public import EthLib.Cryptography.Hash.Sha256.ZsfProof.Ref
 
-/-! Rounds: one sixteen-round chunk of `zloop` is sixteen EthLib rounds plus sixteen `Window.next`
-    steps (none at `t = 48`); four chunks are `rounds K.toList`. -/
+/-! Rounds: one sixteen-round chunk of `zloop` is sixteen EthLib rounds plus sixteen `Window.next` steps (none at `t = 48`); four chunks are `rounds K.toList`. -/
 
 public section
 
@@ -139,8 +138,7 @@ theorem zloop_chunk48 (fuel : Nat) (m out : ByteArray) (hout : out.size = 32) (p
   rw [kList48]
   exact chunk_last 48 64 (by decide) (by decide) (by decide) fuel m out hout ph s ho H a b c d e f g h w0 w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12 w13 w14 w15
 
-/-- A whole block: four chunks are `rounds K.toList` (follows from the four chunks,
-    `rounds_append`, `K_toList_split`, `kList_length`). -/
+/-- A whole block: four chunks are `rounds K.toList` (follows from the four chunks, `rounds_append`, `K_toList_split`, `kList_length`). -/
 theorem zloop_block (fuel : Nat) (m out : ByteArray) (hout : out.size = 32) (ph : Ph) (s : Nat)
     (ho : s ≤ m.size) (H S : State) (W : Window) :
     zloopS (fuel + 4) m out hout ph s ho 0 H S W =

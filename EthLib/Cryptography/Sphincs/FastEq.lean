@@ -15,8 +15,7 @@ This module proves the two equal in the pure instance:
 
 - `rootAndPath_eq`: one level-by-level pass gives `Merkle.root` and `Merkle.path` of `Id`.
 - `allLevels_root`, `allLevels_path`: so do the retained levels of a tree.
-- `climb_siblings`: the climb from a leaf over the specification's path reaches the root, so a
-  known-leaf tree needs `Merkle.path` and the climb only.
+- `climb_siblings`: the climb from a leaf over the specification's path reaches the root, so a known-leaf tree needs `Merkle.path` and the climb only.
 - `Packed.levels_root`, `Packed.levels_path`: the packed levels give the root and every path.
 - `sign_eq_signFast`, `keyGen_eq_keyGenFast`: so do the executable `sign` and `keyGen`.
 
@@ -307,8 +306,7 @@ theorem ordered_parent (z j : Nat) :
     rw [e2, e1]
 
 omit [Inhabited α] in
-/-- Climbing from node `(z, j)` over the siblings `Merkle.siblings` returns reaches the ancestor
-`k` levels up. So the climb from a leaf over its path reaches the root. -/
+/-- Climbing from node `(z, j)` over the siblings `Merkle.siblings` returns reaches the ancestor `k` levels up. So the climb from a leaf over its path reaches the root. -/
 theorem climb_siblings : ∀ (k z j : Nat),
     Id.run (Merkle.climb H z j (N H L z j) (Id.run (Merkle.siblings H L z j k)).toList) =
       N H L (z + k) (j >>> k)
