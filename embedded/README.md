@@ -107,6 +107,7 @@ embedded/tools/count_run.sh out/sha_into.elf
 
 Segments 1, 5 and 9 hold one hash of the 3-, 64- and 1,072-byte message, and segments 3, 7 and 11 eleven hashes of the same message.
 The instructions per hash are the difference of the two, divided by 10, as for the C reference below.
+The eleven-hash segment is also the message's last use, so it frees the message and wipes its bytes: `pq_free` and `lean_dec_ref_cold` add 61, 96 and 726 instructions to it at 3, 64 and 1,072 bytes, about 6, 10 and 73 per hash.
 `R 1` and `R 2` are the digest of the 3-byte message, `R 3` and `R 4` of the 64-byte message, and `R 5` and `R 6` of the 1,072-byte message.
 
 `first-fast` and `first-spec` build `ShaFirst.lean.in`, which hashes eight 3-byte messages, one per segment, to show what the first hash of a run costs more than the others.
