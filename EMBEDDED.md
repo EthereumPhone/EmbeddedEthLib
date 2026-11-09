@@ -365,7 +365,7 @@ At the head of this fork:
 - Upstream's layout gate reports no finding on the whole tree (`scripts/check_lean_layout.py --all --rule wrap`, which CI runs on every push), and `scripts/check_python_comments.py --all` none either. Against upstream (`--base 0b028a98`) the only findings are five in `Hash/Keccak/Spec.lean`: that file is upstream's `Keccak.lean` byte for byte, which the check counts as new because the module moved. A pull request into this fork is checked against the fork's own base, where the file is not new.
 - `python3 embedded/gen/keccak/regen.py --check` passes: the generators write the committed Keccak modules byte for byte.
 - On QEMU, the verify benchmark exits with status 0, prints the expected known answers, and its traced counts equal the tables above.
-- On a B-U585I-IOT02A, from SRAM at 160 MHz, the leanSPHINCS and SHA-256 board images built from this repository pass every known answer (see "This fork's code" under "Cycles on the STM32U585").
+- On a B-U585I-IOT02A, from SRAM at 160 MHz, the leanSPHINCS and SHA-256 board images built from this repository at commit `4d4fce1a` passed every known answer (see "This fork's code" under "Cycles on the STM32U585"). The board was not re-run at the head. At the head, every QEMU figure of the leanSPHINCS and SHA-256 tables above reproduces from a fresh clone (exact counts, and the published four significant figures for signing and key generation), and the board images build with every loadable segment inside the SRAM range.
 
 This fork's workflows run CI on `main`, and `publish.yml` runs only in `ethereum/EthLib`, so the fork never publishes to PyPI.
 The weekly schedules of `replay.yml` and `vectors-slow.yml` are kept.

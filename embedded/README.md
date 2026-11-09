@@ -151,6 +151,18 @@ arm-none-eabi-gcc -mcpu=cortex-m33 -mthumb -O2 -ffunction-sections -fdata-sectio
 embedded/board/run_on_board.sh my.elf 0x30000000 64 60
 ```
 
+The C reference on the board, `board/sha/ref_board.c`, is such a program; it hashes `NHASH` 3-byte messages, and the cycles per hash are the difference of two runs divided by 10.
+It runs at the reset clock: in SRAM the cycle counts do not depend on the clock.
+
+```bash
+for N in 1 11; do
+  arm-none-eabi-gcc -mcpu=cortex-m33 -mthumb -O2 -ffunction-sections -fdata-sections -ffreestanding -nostdlib \
+    -DNHASH=$N -Iembedded/board -T embedded/board/link_sram.ld -Wl,--gc-sections \
+    embedded/board/startup.c embedded/board/sha/ref_board.c -lgcc -o out/ref_board$N.elf
+  embedded/board/run_on_board.sh out/ref_board$N.elf 0x30000000 64 60
+done
+```
+
 The Lean benchmarks build for the board with `silicon/build.sh`, which uses the same compiler, flags and generated C as the QEMU build.
 It swaps `rt.c` for `rt_silicon.c` (the same allocator, with the board's I/O and an optional switch to 160 MHz) and `bench_io.c` for `bench_io_silicon.c` (each mark records a 64-bit DWT cycle stamp):
 

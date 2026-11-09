@@ -15,6 +15,9 @@ build/
 *.so
 *.dylib
 
+# This fork's embedded build outputs, when built into out/ as embedded/README.md shows
+/out/
+
 # Editor / OS
 .DS_Store
 .idea/

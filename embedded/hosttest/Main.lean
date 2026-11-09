@@ -1,3 +1,5 @@
+module
+
 import EthLib.Cryptography.Hash.Sha256
 import EthLib.Cryptography.Hash.Keccak
 import EthLib.Cryptography.Sphincs
@@ -158,7 +160,7 @@ def runSphincs (root : System.FilePath) (doSign : Bool) (t : Tally) : IO Tally :
     t := t.check s!"sphincs verify {d.fileName.getD "?"}" (got == want)
   return t
 
-def main (args : List String) : IO UInt32 := do
+public def main (args : List String) : IO UInt32 := do
   let root : System.FilePath := (args.filter (!·.startsWith "--")).headD "../../tests/cryptography"
   let sign := !args.contains "--no-sign"
   let mut t : Tally := {}
