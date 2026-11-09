@@ -1,14 +1,30 @@
 import EthLib.Cryptography.Hash.Sha256
 
-/-! Cortex-M33 SHA-256 benchmark entry (not part of EthLib), built by `sha256/build.sh into`.
+/-!
+# SHA-256 benchmark of `hashInto`
 
-It calls `Sha256.Zsf.hashInto` with one reused, exclusive 32-byte buffer, so every hash writes its digest in place
-and allocates nothing. Messages are read through `pq_load` from a volatile blob (the leanSPHINCS known answers), so
-nothing can be folded at compile time. The instructions or cycles per hash are the difference of an 11-hash and a
-1-hash segment, divided by 10, the method of the C reference (`sha256/ref.c`, `board/sha/ref_board.c`).
-Segments (`pq_mark`): 1->2 one 3-byte hash, 3->4 eleven, 5->6 one 64-byte hash, 7->8 eleven, 9->10 one 1,072-byte
-hash, 11->12 eleven. Reports 1 to 6 are the buffer after each of those segments, so 1 and 2 are the digest of the
-3-byte message, 3 and 4 of the 64-byte message, and 5 and 6 of the 1,072-byte message. -/
+A Cortex-M33 benchmark entry, not part of EthLib, built by `sha256/build.sh into`.
+
+It calls `Sha256.Zsf.hashInto` with one reused, exclusive 32-byte buffer.
+
+So every hash writes its digest in place and allocates nothing.
+
+Messages are read through `pq_load` from a volatile blob (the leanSPHINCS known answers).
+
+So nothing can be folded at compile time.
+
+The cost per hash is the difference of an 11-hash and a 1-hash segment, divided by 10.
+
+That is the method of the C reference (`sha256/ref.c`, `board/sha/ref_board.c`).
+
+Segments (`pq_mark`): 1->2 one 3-byte hash, 3->4 eleven, 5->6 one 64-byte hash, 7->8 eleven.
+
+Then 9->10 one 1,072-byte hash and 11->12 eleven.
+
+Reports 1 to 6 are the buffer after each of those segments.
+
+So 1 and 2 are the digest of the 3-byte message, 3 and 4 of the 64-byte one, 5 and 6 of the longest.
+-/
 
 open EthLib.Cryptography.Hash
 
