@@ -6,6 +6,9 @@
  * record status + cycles in the results block; bkpt #0 (the debugger's wait_halt returns).
  * Only volatile core/debug registers are written (VTOR, MSPLIM, DEMCR, DWT_CTRL, DWT_CYCCNT). */
 #include "bench.h"
+#ifdef QEMU   /* the QEMU twin reports DONE, HALT and FAULT as its exit status; the board build never uses semihosting */
+#include "../runtime/sh_exit.h"
+#endif
 extern uint32_t __bss_start__[], __bss_end__[], __stack_top[], __stack_limit[];
 void _cstart(void);
 
@@ -42,6 +45,9 @@ __attribute__((used, noreturn)) void fault_c(uint32_t *frame, uint32_t exc_retur
   BENCH.status = ST_FAULT | (ipsr & 0x1FFu);
   BENCH.fault[6] = frame[6];                           /* stacked PC (may itself fault on a bad SP) */
   BENCH.fault[7] = frame[5];                           /* stacked LR */
+#ifdef QEMU
+  pq_sh_exit(0xFA);                                    /* a bkpt here would lock the QEMU core up, and QEMU would hang */
+#endif
   for (;;) __asm volatile("bkpt #1");
 }
 /* 16 system + 128 external entries; VTOR needs alignment to the table size rounded up (<= 1 KiB here). */
@@ -55,7 +61,13 @@ void (*const bench_vectors[16 + 128])(void) = {
 volatile uint32_t bench_fake_cyc;
 #endif
 void bench_putc(char c) { uint32_t n = BENCH.text_len; if (n < sizeof BENCH.text) { BENCH.text[n] = c; BENCH.text_len = n + 1; } }
-void bench_halt(uint32_t code) { BENCH.status = ST_HALT | (code & 0xFFFFu); for (;;) __asm volatile("bkpt #2"); }
+void bench_halt(uint32_t code) {
+  BENCH.status = ST_HALT | (code & 0xFFFFu);
+#ifdef QEMU
+  pq_sh_exit(code ? code : 1);
+#endif
+  for (;;) __asm volatile("bkpt #2");
+}
 
 __attribute__((noreturn, used)) void _cstart(void) {
   *(volatile uint32_t *)0xE000ED08u = (uint32_t)bench_vectors;          /* VTOR_S */
@@ -76,9 +88,8 @@ __attribute__((noreturn, used)) void _cstart(void) {
   uint32_t t1 = bench_cyc();
   BENCH.cyc_run = t1 - t0;
   BENCH.status = ST_DONE;
-#ifdef QEMU   /* semihosting SYS_EXIT (QEMU only; the board build never uses semihosting) */
-  { static uint32_t a[2] = {0x20026, 0}; register uint32_t r0 __asm__("r0") = 0x18; register void *r1 __asm__("r1") = a;
-    __asm volatile("bkpt 0xab" : "+r"(r0) : "r"(r1) : "memory"); }
+#ifdef QEMU   /* semihosting exit, status 0 (QEMU only; the board build never uses semihosting) */
+  pq_sh_exit(0);
 #endif
   for (;;) __asm volatile("bkpt #0");
 }

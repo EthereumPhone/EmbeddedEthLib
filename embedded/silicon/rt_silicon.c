@@ -224,7 +224,7 @@ lean_object *lean_byte_array_copy_slice(lean_object *src, lean_object *o_so, lea
 /* Array.ofFn: generated from Init/Data/Array/Basic.lean (core/), no longer hand-written here. */
 
 
-/* ======================= SILICON I/O TAIL (replaces runtime/rt.c lines 223-267) ======================= */
+/* ======================= SILICON I/O TAIL (replaces runtime/rt.c from line 223 to the end) ======================= */
 #include "pqx.h"
 uint32_t pq_mode(lean_object *u);
 static void puts_(const char *s) { while (*s) bench_putc(*s++); }

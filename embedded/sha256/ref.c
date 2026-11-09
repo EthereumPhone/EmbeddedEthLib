@@ -17,4 +17,4 @@ static void sh(uint32_t op, void *arg){register uint32_t r0 __asm__("r0")=op;reg
 static void pc(char c){sh(3,&c);}
 void Reset_Handler(void){uint8_t acc=0,out[32],msg[3]; static volatile const uint8_t seed[3]={0x61,0x62,0x63}; msg[0]=seed[0];msg[1]=seed[1];
  for(int i=0;i<NHASH;i++){msg[2]=seed[2]+i;sha256(msg,3,out);acc^=out[0];}
- pc("0123456789abcdef"[acc>>4]);pc("0123456789abcdef"[acc&15]);pc('\n');uint32_t a[2]={0x20026,0};sh(0x18,a);for(;;){}}
+ pc("0123456789abcdef"[acc>>4]);pc("0123456789abcdef"[acc&15]);pc('\n');sh(0x18,(void*)0x20026);for(;;){}}  /* SYS_EXIT: on AArch32 R1 is the reason itself; 0x20026, exit status 0 */

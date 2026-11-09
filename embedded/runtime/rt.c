@@ -220,7 +220,8 @@ lean_object *lean_byte_array_copy_slice(lean_object *src, lean_object *o_so, lea
 }
 /* Array.ofFn: generated from Init/Data/Array/Basic.lean (core/), no longer hand-written here. */
 
-/* Semihosting console + exit. */
+/* Semihosting console + exit. The exit status (sh_exit.h): 0 after a complete run, nonzero after pq_halt. */
+#include "sh_exit.h"
 static void sh(uint32_t op, void *arg) { register uint32_t r0 __asm__("r0") = op; register void *r1 __asm__("r1") = arg; __asm__ volatile("bkpt 0xab" : "+r"(r0) : "r"(r1) : "memory"); }
 lean_object *pq_putc(uint32_t c) { char ch = (char)c; sh(3, &ch); return lean_box(0); }
 void pq_sh_puts(const char *s) { puts_(s); }
@@ -228,7 +229,7 @@ void pq_sh_putu(uint32_t v) { putu(v); }
 void pq_sh_puthex(uint8_t b) { const char *h = "0123456789abcdef"; char c[3] = {h[b >> 4], h[b & 15], 0}; puts_(c); }
 static void puts_(const char *s) { while (*s) { char c = *s++; sh(3, &c); } }
 static void putu(uint32_t v) { char b[11]; int i = 10; b[i] = 0; do { b[--i] = '0' + v % 10; v /= 10; } while (v); puts_(&b[i]); }
-static void pq_halt(uint32_t code) { puts_("HALT code "); putu(code); puts_("\n"); uint32_t a[2] = {0x20026, code}; sh(0x18, a); for (;;) {} }
+static void pq_halt(uint32_t code) { puts_("HALT code "); putu(code); puts_("\n"); pq_sh_exit(code ? code : 1); }
 
 extern lean_object *lean_fw_main(lean_object *unit);
 void pq_flush(void);
@@ -261,7 +262,7 @@ void Reset_Handler(void) {
   puts_(" live_after_op="); putu(pq_live - base); puts_("B peak="); putu(pq_peak); puts_("B freed_bytes="); putu(freeb);
   puts_(" nonzero_in_freed="); putu(nonzero); puts_(" bump_highwater="); putu(bump); puts_("B arena_size="); putu(ARENA_BYTES); puts_("B\n");
 #endif
-  uint32_t a[2] = {0x20026, 0}; sh(0x18, a); for (;;) {}
+  pq_sh_exit(0);
 }
 void pq_fatal(uint32_t code) { pq_halt(code); }
 static void pq_oom_report(uint32_t rs, uint32_t b) { puts_("arena exhausted: request="); putu(rs); puts_(" bump="); putu(b); puts_(" live="); putu(pq_live); puts_("\n"); }
