@@ -1,0 +1,41 @@
+@IMPORT@
+
+/-! Cortex-M33 SHA-256 benchmark entry (not part of EthLib), built by `sha256/build.sh`.
+
+`ShaBench.lean` imports `EthLib.Cryptography.Hash.Sha256`, so `Sha256.hash` below compiles to the
+proved zero-allocation form through the `@[csimp]`. `ShaBenchSpec.lean` imports only
+`EthLib.Cryptography.Hash.Sha256.Spec`, so the same source calls the compiled specification.
+Messages are read through `pq_load` from a volatile blob (the leanSPHINCS known answers), so nothing
+can be folded at compile time. Segments (`pq_mark`): 1->2 one 3-byte message, 2->3 one 64-byte
+message, 3->4 one 1,072-byte message, 4->5 ten 64-byte messages. -/
+
+open EthLib.Cryptography.Hash
+
+@[extern "pq_mark"] opaque mark (k : UInt32) : BaseIO Unit
+@[extern "pq_load"] opaque load (off len : UInt32) : BaseIO ByteArray
+@[extern "pq_report_bytes"] opaque reportBytes (tag : UInt32) (b : @& ByteArray) : BaseIO Unit
+
+def tenTimes : Nat → ByteArray → UInt8 → UInt8
+  | 0, _, acc => acc
+  | k + 1, m, acc =>
+    let d := Sha256.hash (m.set! 0 (m.get! 0 + k.toUInt8))
+    tenTimes k m (acc ^^^ d.get! 0)
+
+@[export lean_fw_main]
+def fwMain (_ : Unit) : BaseIO Unit := do
+  let m3 ← load 0 3
+  let m64 ← load 0 64
+  let m1072 ← load 64 1072
+  mark 1
+  let d3 := Sha256.hash m3
+  mark 2
+  let d64 := Sha256.hash m64
+  mark 3
+  let d1072 := Sha256.hash m1072
+  mark 4
+  let acc := tenTimes 10 m64 0
+  mark 5
+  reportBytes 1 d3
+  reportBytes 2 d64
+  reportBytes 3 d1072
+  reportBytes 4 (ByteArray.mk #[acc])
