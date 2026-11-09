@@ -1,5 +1,9 @@
 # Build wheels on every supported platform/Python combo and publish to
 # PyPI when a tag matching `v*` is pushed.
+#
+# Every job runs only in ethereum/EthLib. In a fork, a tag push or a manual
+# dispatch skips them all, so a fork never builds a release, never publishes
+# to PyPI and never creates a GitHub release.
 
 name: publish
 
@@ -15,6 +19,7 @@ permissions:
 jobs:
   build_wheels:
     name: wheels — ${{ matrix.os }} / ${{ matrix.arch }}
+    if: github.repository == 'ethereum/EthLib'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -89,6 +94,7 @@ jobs:
 
   build_sdist:
     name: sdist
+    if: github.repository == 'ethereum/EthLib'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -106,6 +112,7 @@ jobs:
 
   manifest:
     name: release manifest
+    if: github.repository == 'ethereum/EthLib'
     runs-on: ubuntu-latest
     steps:
       # The whole history, so that the notes can name the previous tag.
@@ -180,8 +187,8 @@ jobs:
     name: publish to PyPI
     needs: [build_wheels, build_sdist, manifest]
     runs-on: ubuntu-latest
-    # Only publish on a real tag push, not a manual dispatch.
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # Only publish on a real tag push, not a manual dispatch, and only from ethereum/EthLib.
+    if: github.repository == 'ethereum/EthLib' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     environment: pypi
     permissions:
       id-token: write
@@ -209,7 +216,7 @@ jobs:
     name: publish the GitHub release
     needs: [manifest, publish]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: github.repository == 'ethereum/EthLib' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
     steps:

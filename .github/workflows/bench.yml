@@ -40,7 +40,7 @@ jobs:
           version: "0.13.6"
           enable-cache: false
 
-      # The latest build that ci.yml saved on master, read only.
+      # The latest build that ci.yml saved on main, read only.
       - name: restore EthLib build
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

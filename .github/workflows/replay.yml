@@ -1,22 +1,22 @@
 # Replay every declaration of EthLib into Lean's kernel with leanchecker, after the build.
 #
 # The replay repeats the kernel work of the proofs, so it does not run on pull requests.
-# It runs on each push to master and every Monday.
+# It runs on each push to main and every Monday.
 
 name: replay
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   schedule:
     - cron: "0 4 * * 1"
   workflow_dispatch:
 
 # A push does not cancel a scheduled run, which has its own group.
-# On master the running replay finishes, and a newer pending run replaces the older one.
+# On main the running replay finishes, and a newer pending run replaces the older one.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -31,7 +31,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # The latest build that ci.yml saved on master, read only.
+      # The latest build that ci.yml saved on main, read only.
       - name: restore EthLib build
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
