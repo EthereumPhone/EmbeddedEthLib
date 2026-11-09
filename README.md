@@ -1,3 +1,23 @@
+# EmbeddedEthLib
+
+> **Unofficial fork.** EmbeddedEthLib is a fork of [EthLib](https://github.com/ethereum/EthLib), maintained by EthereumPhone / Freedom Factory.
+> It is not affiliated with, reviewed by or endorsed by the Ethereum Foundation or the EthLib maintainers.
+> Report problems with this fork here, not upstream.
+
+EmbeddedEthLib is EthLib at upstream commit [`0b028a98`](https://github.com/ethereum/EthLib/commit/0b028a9871fe92acfaad8d7d5842bc305edb24e4), with its full history and its CC0 licence, plus faster compiled code for 32-bit embedded targets such as the Cortex-M33 of an STM32U585.
+What is different:
+
+- **Fast compiled forms, each proved equal to EthLib's own definition.** SHA-256, Keccak-f[1600] and Keccak-256, leanSPHINCS signing, the leanSPHINCS tweakable hash, and byte-slice reads have fast forms. A `@[csimp]` theorem, which the kernel checks like any other, installs each one, so the compiled code runs the fast form while every proof still reasons about the readable specification. No definition or theorem statement of EthLib changes; the fork adds modules, theorems and imports.
+- **Cortex-M33 tooling** in [`embedded/`](embedded/): a freestanding runtime, build scripts for QEMU `mps2-an505` and for an SRAM runner on the STM32U585, the benchmarks, an instruction counter, and a host test against `tests/cryptography`.
+- **The declaration check lists the substitutions.** Upstream's `lake exe check-decls` fails on any `@[csimp]`. This fork lists exactly its own in [`scripts/check_decls_baseline.txt`](scripts/check_decls_baseline.txt), and [SOUNDNESS.md](SOUNDNESS.md) section B5 says what that trusts.
+
+The Lean package is still called `EthLib` and every module keeps its name, so the fork is a drop-in replacement.
+[EMBEDDED.md](EMBEDDED.md) lists every fast path with its theorems, the measured results and their caveats.
+
+The rest of this file is upstream's README.
+
+---
+
 # EthLib
 
 Formally verified Ethereum primitives, written in Lean.

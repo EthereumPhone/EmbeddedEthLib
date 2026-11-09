@@ -43,7 +43,7 @@ Gap D asks whether the use of EthLib holds together.
 | B2 | Lean core runs code other than its definitions | Lean core is a declared baseline | R B |
 | B3 | Elaboration runs native code | None | P |
 | B4 | The hand-written C boundary is wrong | The regeneration and comparison of B1 | B |
-| B5 | This repository substitutes compiled code | `lake exe check-decls` fails on any new substitution | R B |
+| B5 | This repository substitutes compiled code | No `extern` or `implemented_by`. The `@[csimp]` theorems of this fork are each proved and listed in the baseline; `lake exe check-decls` fails on any other substitution | R B |
 | B6 | The build or the published wheel differs from the source | Fresh build per wheel in CI, with a pinned elan. Each wheel runs the vector suites, and carries a build provenance attestation | B |
 | C1 | The Lean kernel or its axioms are unsound | None: `lake exe check-decls` checks which axioms a theorem uses, not that the kernel or the axioms are sound | P |
 | C2 | A proof trusts compiled code | `lake exe check-decls` fails on any new use; the remaining ones are listed in C2 | P |
@@ -1798,6 +1798,10 @@ A `reaches-opaque` one unfolds to an opaque constant, such as `Loop.forIn`, whic
 The list below is generated from that file, and it is empty when none remains.
 
 <!-- generated: unfoldable -->
+- `EthLib.Cryptography.Hash.Keccak.Fast.rdU`, `reaches-opaque`
+- `EthLib.Cryptography.Hash.Keccak.Fast.rdb`, `reaches-opaque`
+- `EthLib.Cryptography.Hash.Sha256.Zsf.wordU`, `reaches-opaque`
+- `ByteArray.uget.match_1.splitter` (private), `reaches-opaque`
 <!-- end generated -->
 
 ## Gap A: does the definition say what the source and the client need?
@@ -1999,8 +2003,27 @@ Each export that moves to typed values removes its own C, and the line count abo
 `@[implemented_by]` and `@[extern]` make the compiled code run something other than the definition, with no proof that the two agree.
 `@[csimp]` replaces a function with one proved equal to it, so it adds no logical trust, but the code that runs is still not the definition a reader reads.
 
-The repository has none of the three today.
-`lake exe check-decls` reports any of them, and fails on one that is not in its baseline.
+The repository has no `@[implemented_by]` and no `@[extern]`.
+
+Upstream EthLib has no `@[csimp]` either.
+This fork, EmbeddedEthLib, has 23, which make the compiled code fast on 32-bit targets.
+Each one is a theorem `f = g` between the specification's function `f` and a fast form `g`, and the kernel checks it like any other theorem:
+
+- SHA-256: `Sha256.hash`, `Sha256.hash32` and `sha256`, proved in `EthLib/Cryptography/Hash/Sha256/ZsfProof/`;
+- Keccak: `keccakF`, `keccak256`, `keccak512`, `Hasher.absorb` and `Hasher.digest`, proved in `EthLib/Cryptography/Hash/Keccak/FastProof.lean` and `FastProofI.lean`;
+- leanSPHINCS: `sign`, proved in `EthLib/Cryptography/Sphincs/FastEq.lean`, and the tweakable hash `th`, `prf`, `trunc`, `adrs`, `keyAdrs` and the eight address builders, proved in `EthLib/Cryptography/Sphincs/TweakableHash/Fast.lean`;
+- bytes: `readBytes`, proved in `EthLib/Base/Bytes/Fast.lean`.
+
+So a proof about `f` holds for the code that runs, with no new logical trust.
+Three things are still trusted or left open:
+
+- The compiler applies a `@[csimp]` theorem by replacing `f` with `g` in the code it compiles. That step is part of the compiler, which B1 trusts.
+- The theorem equates values, not costs. Time, memory and side channels (A3) of `g` are not those of `f`, and `g` is what runs, so a reader who audits the compiled behaviour must read `g`.
+- A substitution applies only to code compiled after the theorem is in scope. The aggregator modules `EthLib.Cryptography.Hash.Sha256`, `EthLib.Cryptography.Hash.Keccak`, `EthLib.Base.Bytes` and `EthLib.Cryptography.Sphincs` re-export them, so every importer of those modules gets them. Code that imports only a `Spec` module runs the specification.
+
+`lake exe check-decls` reports every substitution.
+`scripts/check_decls_baseline.txt` lists exactly the 23 above, and the check fails on any other, and on any `extern` or `implemented_by`.
+[EMBEDDED.md](EMBEDDED.md) names each fast form and its theorems.
 
 ### B6. The build and its publication
 

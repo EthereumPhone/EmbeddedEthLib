@@ -1,8 +1,57 @@
-# Findings of `lake exe check-decls` that exist today, each one to be removed.
+# Findings of `lake exe check-decls` that exist today.
 #
 # One finding per line: its kind, then the declaration it is reported at.
 # A finding not listed here fails the check.
 # A line that no longer matches a finding fails the check too, so this file is
 # always the exact list of findings that exist.
-# Remove an entry in the pull request that removes its finding.
-# Never add one: a new finding is fixed, not listed.
+#
+# Upstream EthLib keeps this list empty and never adds an entry. This fork
+# (EmbeddedEthLib) lists exactly the substitutions it makes on purpose, and
+# nothing else may be added: every `csimp` entry is a theorem `f = fFast` that the
+# kernel checked, and EMBEDDED.md names the module that proves it. No `extern`,
+# `implemented_by`, axiom, `partial` or `unsafe` finding may ever be listed.
+# SOUNDNESS.md, section B5, explains what such an entry does and does not trust.
+
+# SHA-256, proved in EthLib/Cryptography/Hash/Sha256/ZsfProof/.
+csimp EthLib.Cryptography.Hash.Sha256.ZsfProof.hash_eq_hashZ
+csimp EthLib.Cryptography.Hash.Sha256.ZsfProof.hash32_eq_hash32Z
+csimp EthLib.Cryptography.Hash.sha256_eq_hashZ
+
+# Keccak, proved in EthLib/Cryptography/Hash/Keccak/FastProof.lean and FastProofI.lean.
+csimp EthLib.Cryptography.Hash.Keccak.Fast.keccakF_eq_keccakF2
+csimp EthLib.Cryptography.Hash.Keccak.Fast.keccak256_eq_keccak256IG
+csimp EthLib.Cryptography.Hash.Keccak.Fast.keccak512_eq_keccak512R
+csimp EthLib.Cryptography.Hash.Keccak.Fast.hasherAbsorb_eq_R
+csimp EthLib.Cryptography.Hash.Keccak.Fast.hasherDigest_eq_R
+
+# leanSPHINCS signing, proved in EthLib/Cryptography/Sphincs/FastEq.lean.
+csimp EthLib.Cryptography.Sphincs.sign_eq_signFast
+
+# Byte reads, proved in EthLib/Base/Bytes/Fast.lean.
+csimp EthLib.Base.readBytes_eq_readBytesP
+
+# The leanSPHINCS tweakable hash, proved in EthLib/Cryptography/Sphincs/TweakableHash/Fast.lean.
+csimp EthLib.Cryptography.Sphincs.Fast.adrs_eq
+csimp EthLib.Cryptography.Sphincs.Fast.keyAdrs_eq
+csimp EthLib.Cryptography.Sphincs.Fast.adrsChain_eq
+csimp EthLib.Cryptography.Sphincs.Fast.adrsPk_eq
+csimp EthLib.Cryptography.Sphincs.Fast.adrsNode_eq
+csimp EthLib.Cryptography.Sphincs.Fast.adrsPrf_eq
+csimp EthLib.Cryptography.Sphincs.Fast.adrsEnc_eq
+csimp EthLib.Cryptography.Sphincs.Fast.adrsFors_eq
+csimp EthLib.Cryptography.Sphincs.Fast.adrsRoots_eq
+csimp EthLib.Cryptography.Sphincs.Fast.adrsFprf_eq
+csimp EthLib.Cryptography.Sphincs.Fast.trunc_eq
+csimp EthLib.Cryptography.Sphincs.Fast.th_eq
+csimp EthLib.Cryptography.Sphincs.Fast.prf_eq
+
+# The fast forms read bytes in place with `ByteArray.uget`, whose `USize` index
+# reaches `System.Platform.getNumBits`, the platform word size, which is opaque.
+# The kernel cannot evaluate these four definitions by unfolding. Nothing in this
+# repository asks it to: their proofs rewrite them, and the specification they
+# stand in for stays fully reducible. Lean core's `USize` operations reach
+# `getNumBits` the same way.
+reaches-opaque EthLib.Cryptography.Hash.Sha256.Zsf.wordU
+reaches-opaque EthLib.Cryptography.Hash.Keccak.Fast.rdU
+reaches-opaque EthLib.Cryptography.Hash.Keccak.Fast.rdb
+reaches-opaque _private.EthLib.Cryptography.Hash.Keccak.FastProof.0.ByteArray.uget.match_1.splitter

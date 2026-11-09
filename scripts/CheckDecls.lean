@@ -293,12 +293,18 @@ def check (env : Environment) (scope : Name) : Array Finding := Id.run do
 
 /-! ## The baseline -/
 
-/-- The baseline: one `kind declaration` per line, with `#` comments and blank lines ignored. -/
-def readBaseline (path : System.FilePath) : IO (List (String × Name)) := do
+/-- The baseline: one `kind declaration` per line, with `#` comments and blank lines ignored.
+
+A declaration is kept, and compared, as the text the check prints for it.
+
+A generated private name has a numeric component, as in `_private.M.0.f.match_1.splitter`.
+
+`String.toName` would read that component back as a string. -/
+def readBaseline (path : System.FilePath) : IO (List (String × String)) := do
   let lines ← IO.FS.lines path
   return lines.toList.filterMap fun line =>
     match (line.splitOn "#").head!.splitOn " " |>.filter (· ≠ "") with
-    | [kind, decl] => some (kind, decl.toName)
+    | [kind, decl] => some (kind, decl)
     | _ => none
 
 /-- Entry point: `check-decls [--scope NAME] [--baseline FILE] [Module ...]`.
@@ -331,11 +337,12 @@ unsafe def run (args : List String) : IO UInt32 := do
     return 3
   let baseline ← readBaseline baselinePath
   let findings := check env scope
-  let isListed (f : Finding) := baseline.contains (f.kind, f.decl)
+  let isListed (f : Finding) := baseline.contains (f.kind, toString f.decl)
   let fresh := findings.filter (!isListed ·)
   for f in fresh do
     IO.println s!"{f.kind} {f.decl}: {f.detail}"
-  let stale := baseline.filter fun (kind, decl) => !findings.any (fun f => f.kind == kind && f.decl == decl)
+  let stale := baseline.filter fun (kind, decl) =>
+    !findings.any (fun f => f.kind == kind && toString f.decl == decl)
   for (kind, decl) in stale do
     IO.println s!"stale baseline entry, no longer found: {kind} {decl}"
   let nDecls := env.constants.toList.countP fun (n, _) => inScope env scope n
