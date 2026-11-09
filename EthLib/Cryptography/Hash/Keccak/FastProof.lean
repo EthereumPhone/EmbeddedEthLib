@@ -32,13 +32,20 @@ theorem roundsFrom_succ (i : Nat) (h : i < 24) (A : State) :
 theorem roundsFrom_24 (A : State) : keccakF.roundsFrom 24 A = A := by
   rw [keccakF.roundsFrom]; simp [ROUNDS]
 
-theorem loop1_eq : ∀ (n : Nat) (i : UInt32) (a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24 : UInt64),
-    i.toNat + n = 24 → loop1 n i a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24 = keccakF.roundsFrom i.toNat ⟨a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23, a24⟩ := by
+theorem loop1_eq : ∀ (n : Nat) (i : UInt32) (a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15
+    a16 a17 a18 a19 a20 a21 a22 a23 a24 : UInt64),
+    i.toNat + n = 24 → loop1 n i a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18
+        a19 a20 a21 a22 a23 a24 = keccakF.roundsFrom i.toNat ⟨a0, a1, a2, a3, a4, a5, a6, a7, a8,
+        a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23, a24⟩ := by
   intro n
   induction n with
-  | zero => intro i a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24 h; simp at h; rw [h, roundsFrom_24]; rfl
+  | zero =>
+    intro i a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23
+      a24 h
+    simp at h; rw [h, roundsFrom_24]; rfl
   | succ n ih =>
-    intro i a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24 h
+    intro i a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23
+        a24 h
     have hi : i.toNat < 24 := by omega
     rw [roundsFrom_succ _ hi]
     have hs := toNat_succ i hi
@@ -61,20 +68,28 @@ theorem toNat_succ2 (i : UInt32) (h : i.toNat < 23) : (i + 1 + 1).toNat = i.toNa
 theorem toNat_add2 (i : UInt32) (h : i.toNat < 23) : (i + 2).toNat = i.toNat + 2 := by
   rw [UInt32.toNat_add]; simp; omega
 
-theorem loop2_eq : ∀ (n : Nat) (i : UInt32) (a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24 : UInt64),
-    i.toNat + 2 * n = 24 → loop2 n i a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24 = keccakF.roundsFrom i.toNat ⟨a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23, a24⟩ := by
+theorem loop2_eq : ∀ (n : Nat) (i : UInt32) (a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15
+    a16 a17 a18 a19 a20 a21 a22 a23 a24 : UInt64),
+    i.toNat + 2 * n = 24 → loop2 n i a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17
+        a18 a19 a20 a21 a22 a23 a24 = keccakF.roundsFrom i.toNat ⟨a0, a1, a2, a3, a4, a5, a6, a7,
+        a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23, a24⟩ := by
   intro n
   induction n with
-  | zero => intro i a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24 h; simp at h; rw [h, roundsFrom_24]; rfl
+  | zero =>
+    intro i a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23
+      a24 h
+    simp at h; rw [h, roundsFrom_24]; rfl
   | succ n ih =>
-    intro i a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24 h
+    intro i a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23
+        a24 h
     have hi : i.toNat < 24 := by omega
     have hi1 : (i + 1).toNat < 24 := by rw [toNat_succ i hi]; omega
     rw [roundsFrom_succ _ hi, roundsFrom_succ _ (by omega)]
     have hr := rc_of i hi
     have hr1 := rc_of (i + 1) hi1
     simp only [loop2]
-    rw [ih (i + 2) _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ (by rw [toNat_add2 i (by omega)]; omega), toNat_add2 i (by omega)]
+    rw [ih (i + 2) _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+        (by rw [toNat_add2 i (by omega)]; omega), toNat_add2 i (by omega)]
     congr 1
     have e1 : i.toNat + 1 = (i + 1).toNat := (toNat_succ i hi).symm
     simp only [e1]
@@ -105,12 +120,16 @@ theorem keccakF2_eq : keccakF2 = keccakF := by
     (h : p + 136 ≤ bytes.size) (q : USize) (hq : q = USize.ofNat p) (c : Nat) (hc : c + 8 ≤ 136) :
     UInt64 :=
   rdU bytes p h q hq c (by omega) ||| rdU bytes p h q hq (c + 1) (by omega) <<< 8 |||
-    rdU bytes p h q hq (c + 2) (by omega) <<< 16 ||| rdU bytes p h q hq (c + 3) (by omega) <<< 24 |||
-    rdU bytes p h q hq (c + 4) (by omega) <<< 32 ||| rdU bytes p h q hq (c + 5) (by omega) <<< 40 |||
-    rdU bytes p h q hq (c + 6) (by omega) <<< 48 ||| rdU bytes p h q hq (c + 7) (by omega) <<< 56
+    rdU bytes p h q hq (c + 2) (by omega) <<< 16 |||
+    rdU bytes p h q hq (c + 3) (by omega) <<< 24 |||
+    rdU bytes p h q hq (c + 4) (by omega) <<< 32 |||
+    rdU bytes p h q hq (c + 5) (by omega) <<< 40 |||
+    rdU bytes p h q hq (c + 6) (by omega) <<< 48 |||
+    rdU bytes p h q hq (c + 7) (by omega) <<< 56
 
 /-- Absorb `n` blocks of 136 bytes from `p` on, the permutation `f` after each. -/
-@[specialize] def absorbU (f : State → State) (bytes : @& ByteArray) (hs : bytes.size < USize.size) :
+@[specialize] def absorbU (f : State → State) (bytes : @& ByteArray)
+    (hs : bytes.size < USize.size) :
     (n p : Nat) → p + 136 * n ≤ bytes.size → State → State
   | 0, _, _, S => S
   | n + 1, p, hp, S =>
@@ -159,8 +178,10 @@ theorem zeros_extract (k : Nat) (hk : k ≤ 136) :
 theorem copy_eq (msg : ByteArray) (k : Nat) (hk : k ≤ 136) :
     zeros136.copySlice 0 msg msg.size k = msg ++ ⟨Array.replicate k 0⟩ := by
   rw [ByteArray.copySlice_eq_append, zeros_extract k hk, ByteArray.extract_zero_size]
-  have : msg.extract (msg.size + min k (zeros136.data.size - 0)) msg.data.size = ByteArray.empty := by
-    rw [ByteArray.extract_eq_empty_iff]; simp only [zeros136, Array.size_replicate]; exact Nat.le_trans (Nat.min_le_right _ _) (Nat.le_add_right _ _)
+  have : msg.extract (msg.size + min k (zeros136.data.size - 0)) msg.data.size =
+      ByteArray.empty := by
+    rw [ByteArray.extract_eq_empty_iff]; simp only [zeros136, Array.size_replicate]
+    exact Nat.le_trans (Nat.min_le_right _ _) (Nat.le_add_right _ _)
   rw [this]
   apply ByteArray.ext; simp
 
@@ -222,7 +243,8 @@ theorem padF_eq (msg : ByteArray) : padF msg = pad RATE msg := by
   · intro i hi hi'
     rw [ByteArray.getElem_set! _ _ _ _ (by omega) (by simpa using hi)]
     simp only [pad] at hi' ⊢
-    have hi2 : i < msg.size + k := by have := hi'; rw [ByteArray.size_append, hpad] at this; exact this
+    have hi2 : i < msg.size + k := by
+      have := hi'; rw [ByteArray.size_append, hpad] at this; exact this
     by_cases hin : i < msg.size
     · rw [ByteArray.getElem_append_left hin]
       rw [ite_eq_right (by omega), hYi, ite_eq_right (by omega), dite_eq_left hin]
@@ -237,7 +259,8 @@ theorem padF_eq (msg : ByteArray) : padF msg = pad RATE msg := by
       · subst h0
         by_cases h1 : k = 1
         · subst h1; simp
-        · rw [ite_eq_right (show ¬(msg.size + k - 1 = msg.size) by omega), ite_eq_left rfl, Nat.sub_self,
+        · rw [ite_eq_right (show ¬(msg.size + k - 1 = msg.size) by omega), ite_eq_left rfl,
+            Nat.sub_self,
             ite_eq_right (show ¬(k - 1 = 0) by omega), ite_eq_left rfl]
           decide
       · rw [ite_eq_right h0, dite_eq_right hin]
@@ -247,7 +270,8 @@ theorem padF_eq (msg : ByteArray) : padF msg = pad RATE msg := by
           have a2 : ¬ (msg.size + k - 1 < msg.size) := by omega
           have a3 : msg.size + k - 1 - msg.size = k - 1 := by omega
           have a4 : ¬ (0 = k - 1) := by omega
-          rw [ite_eq_left rfl, ite_eq_right a1, dite_eq_right a2, a3, ite_eq_left rfl, ite_eq_right a4]
+          rw [ite_eq_left rfl, ite_eq_right a1, dite_eq_right a2, a3, ite_eq_left rfl, ite_eq_right
+              a4]
         · rw [ite_eq_right h1, ite_eq_right (by omega), ite_eq_right (by omega)]
 
 

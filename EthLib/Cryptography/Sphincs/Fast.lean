@@ -180,7 +180,8 @@ def treeLevels (pkSeed : PkSeed) (prf : Prf Id) (layer : Layer) (tree : Nat) :
 def forsOpenAndRoot (pkSeed : PkSeed) (prf : Prf Id) (idx : Nat) (kappa : Fin FORS_TREES)
     (s : Fin (2 ^ FORS_HEIGHT)) : TreeOpening × Digest :=
   let secret := Id.run (forsSecret prf idx kappa s.val)
-  let (root, path) := rootAndPath (fun z j l r => Id.run (forsNodeHash hashId pkSeed idx kappa z j l r))
+  let (root, path) := rootAndPath (fun z j l r => Id.run (forsNodeHash hashId pkSeed idx kappa z j l
+      r))
     (fun t => Id.run (forsLeaves hashId pkSeed prf idx kappa t)) FORS_HEIGHT s.val
   ({ secret, path }, root)
 

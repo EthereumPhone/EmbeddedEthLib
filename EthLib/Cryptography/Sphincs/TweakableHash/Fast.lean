@@ -44,10 +44,12 @@ theorem toByte4 (w : UInt32) : toByte 4 w.toNat =
   congr 2
   simp only [List.cons.injEq, and_true]
   refine ⟨?_, ?_, ?_, ?_⟩ <;> apply b8 <;>
-    simp only [UInt32.toNat_toUInt8, UInt32.toNat_shiftRight, Nat.shiftRight_eq_div_pow] <;> simp <;> omega
+    simp only [UInt32.toNat_toUInt8, UInt32.toNat_shiftRight, Nat.shiftRight_eq_div_pow] <;>
+        simp <;> omega
 
 theorem toByte12 (t : UInt64) : toByte 12 t.toNat =
-    #v[(0 : UInt8), 0, 0, 0, (t >>> 56).toUInt8, (t >>> 48).toUInt8, (t >>> 40).toUInt8, (t >>> 32).toUInt8,
+    #v[(0 : UInt8), 0, 0, 0, (t >>> 56).toUInt8, (t >>> 48).toUInt8, (t >>> 40).toUInt8, (t >>>
+        32).toUInt8,
       (t >>> 24).toUInt8, (t >>> 16).toUInt8, (t >>> 8).toUInt8, t.toUInt8] := by
   have ht := t.toNat_lt
   simp only [toByte, EthLib.Base.natToBytes, EthLib.Base.natToBytes.go]

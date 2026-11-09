@@ -96,15 +96,19 @@ theorem K_toList_split : K.toList = kList 0 ++ kList 16 ++ kList 32 ++ kList 48 
 theorem kList_length (t : Nat) (h : t ≤ 48) : (kList t).length = 16 := by
   simp [kList]; omega
 
-theorem compress_eq (S : State) (bytes : ByteArray) (start : Nat) (whole : start + 64 ≤ bytes.size) :
-    compress S bytes start whole = addS S (rounds K.toList (Window.ofBlock bytes start whole) S) := by
+theorem compress_eq (S : State) (bytes : ByteArray) (start : Nat) (whole : start + 64 ≤
+    bytes.size) :
+    compress S bytes start whole =
+      addS S (rounds K.toList (Window.ofBlock bytes start whole) S) := by
   rw [compress]; rfl
 
-theorem chain_zero (bytes : ByteArray) (start : Nat) (whole : start + 64 * 0 ≤ bytes.size) (S : State) :
+theorem chain_zero (bytes : ByteArray) (start : Nat) (whole : start + 64 * 0 ≤ bytes.size) (S :
+    State) :
     chain compress bytes 0 start whole S = S := by
   rw [chain]
 
-theorem chain_succ (bytes : ByteArray) (count start : Nat) (whole : start + 64 * (count + 1) ≤ bytes.size)
+theorem chain_succ (bytes : ByteArray) (count start : Nat) (whole : start + 64 * (count + 1) ≤
+    bytes.size)
     (S : State) :
     chain compress bytes (count + 1) start whole S =
       chain compress bytes count (start + 64) (by omega) (compress S bytes start (by omega)) := by

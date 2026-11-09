@@ -24,13 +24,16 @@ private theorem hash_via (m : ByteArray) (p : ByteArray) (hp : Sha256.pad m = p)
   subst hp hS hcount
   rfl
 
-theorem hashInto_eq (m out : ByteArray) : EthLib.Cryptography.Hash.Sha256.Zsf.hashInto m out = Sha256.hash m := by
-  have hout : (if out.size = 32 then out else EthLib.Cryptography.Hash.Sha256.Zsf.zeros32).size = 32 := by
+theorem hashInto_eq (m out : ByteArray) : EthLib.Cryptography.Hash.Sha256.Zsf.hashInto m out =
+    Sha256.hash m := by
+  have hout : (if out.size = 32 then out else EthLib.Cryptography.Hash.Sha256.Zsf.zeros32).size =
+      32 := by
     split
     · assumption
     · exact EthLib.Cryptography.Hash.Sha256.Zsf.zeros32_size
   have h1 : EthLib.Cryptography.Hash.Sha256.Zsf.hashInto m out =
-      zloopS (5 * (m.size / 64) + 16) m (if out.size = 32 then out else EthLib.Cryptography.Hash.Sha256.Zsf.zeros32) hout
+      zloopS (5 * (m.size / 64) + 16) m (if out.size = 32 then out else
+          EthLib.Cryptography.Hash.Sha256.Zsf.zeros32) hout
         .body 0 (Nat.zero_le _) 64
         ⟨0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
           0x5be0cd19⟩ ⟨0, 0, 0, 0, 0, 0, 0, 0⟩
@@ -42,11 +45,13 @@ theorem hashInto_eq (m out : ByteArray) : EthLib.Cryptography.Hash.Sha256.Zsf.ha
   have hc : 0 + 64 * ((Sha256.pad m).size / 64) = (Sha256.pad m).size := by omega
   have hfuel : 5 * ((m.size - 0) / 64) + 11 ≤ 5 * (m.size / 64) + 16 := by
     rw [Nat.sub_zero]; omega
-  rw [h1, zloop_sim (5 * (m.size / 64) + 16) m _ hout 0 (Nat.zero_le _) ((Sha256.pad m).size / 64) hc
+  rw [h1, zloop_sim (5 * (m.size / 64) + 16) m _ hout 0 (Nat.zero_le _) ((Sha256.pad m).size / 64)
+      hc
     hfuel _ _ _ (Nat.le_of_eq hc), addS_init]
   exact hash_via m (Sha256.pad m) rfl _ rfl _ rfl _
 
-theorem hashZ_eq (m : ByteArray) : EthLib.Cryptography.Hash.Sha256.Zsf.hashZ m = Sha256.hash m := hashInto_eq m EthLib.Cryptography.Hash.Sha256.Zsf.zeros32
+theorem hashZ_eq (m : ByteArray) : EthLib.Cryptography.Hash.Sha256.Zsf.hashZ m = Sha256.hash m :=
+    hashInto_eq m EthLib.Cryptography.Hash.Sha256.Zsf.zeros32
 
 /-- Compiled code that calls `hash` runs `EthLib.Cryptography.Hash.Sha256.Zsf.hashZ`; the kernel still reasons about `hash`. -/
 @[csimp] theorem hash_eq_hashZ : @Sha256.hash = @EthLib.Cryptography.Hash.Sha256.Zsf.hashZ := by
@@ -55,7 +60,8 @@ theorem hashZ_eq (m : ByteArray) : EthLib.Cryptography.Hash.Sha256.Zsf.hashZ m =
 
 /-- `hash32` with the fast hash inside: the same 32 bytes as a `Vector`. -/
 def hash32Z (message : ByteArray) : Vector UInt8 32 :=
-  ⟨(EthLib.Cryptography.Hash.Sha256.Zsf.hashZ message).data, by rw [hashZ_eq]; exact (hash32 message).2⟩
+  ⟨(EthLib.Cryptography.Hash.Sha256.Zsf.hashZ message).data, by rw [hashZ_eq]; exact (hash32
+      message).2⟩
 
 /-- Two `Vector.mk`s over the data of equal byte arrays are equal, stated over free `a b`.
 Observed (cause not isolated): a `simp`/`Vector.ext`/`getElem` proof of `hash32_eq_hash32Z` is accepted by the elaboration-time kernel in milliseconds but did not finish under `leanchecker` replay (> 600 s); the term proof through this lemma replays in about 0 ms. -/

@@ -114,20 +114,24 @@ def zeros32 : ByteArray := ⟨Array.replicate 32 0⟩
 
 theorem zeros32_size : zeros32.size = 32 := by simp [zeros32, ByteArray.size]
 
-theorem size_set' (b : ByteArray) (i : Nat) (v : UInt8) (h : i < b.size) : (b.set i v h).size = b.size := by
+theorem size_set' (b : ByteArray) (i : Nat) (v : UInt8) (h : i < b.size) :
+    (b.set i v h).size = b.size := by
   cases b; simp [ByteArray.set, ByteArray.size]
 
 /-- Big-endian bytes of a word, written in place at offset `o`. -/
 @[inline] def put32 (b : ByteArray) (o : Nat) (w : UInt32) (h : o + 4 ≤ b.size) : ByteArray :=
-  (((b.set o (w >>> 24).toUInt8 (by omega)).set (o + 1) (w >>> 16).toUInt8 (by rw [size_set']; omega)).set
+  (((b.set o (w >>> 24).toUInt8 (by omega)).set (o + 1) (w >>> 16).toUInt8
+      (by rw [size_set']; omega)).set
     (o + 2) (w >>> 8).toUInt8 (by rw [size_set', size_set']; omega)).set (o + 3) w.toUInt8
     (by rw [size_set', size_set', size_set']; omega)
 
-theorem size_put32 (b : ByteArray) (o : Nat) (w : UInt32) (h : o + 4 ≤ b.size) : (put32 b o w h).size = b.size := by
+theorem size_put32 (b : ByteArray) (o : Nat) (w : UInt32) (h : o + 4 ≤ b.size) :
+    (put32 b o w h).size = b.size := by
   simp only [put32, size_set']
 
 /-- The `j`-th big-endian word of the block at `start`, exactly as `Window.ofBlock` reads it. -/
-@[inline] def wordAt (bytes : @& ByteArray) (start j : Nat) (h : start + 4 * j + 3 < bytes.size) : UInt32 :=
+@[inline] def wordAt (bytes : @& ByteArray) (start j : Nat) (h : start + 4 * j + 3 < bytes.size) :
+    UInt32 :=
   big32 (bytes[start + 4 * j]'(by omega)) (bytes[start + 4 * j + 1]'(by omega))
     (bytes[start + 4 * j + 2]'(by omega)) (bytes[start + 4 * j + 3]'(by omega))
 
@@ -139,7 +143,8 @@ theorem size_put32 (b : ByteArray) (o : Nat) (w : UInt32) (h : o + 4 ≤ b.size)
   (m[start + i]'h).toUInt32
 
 -- (above doc) The word holding the 0x80 byte, out of line; the caller folds `p = start + 4j` and `k = r - 4j < 4`, so the function does no multiply and reads at most m[p], m[p+1], m[p+2].
-@[noinline] def partialWord (m : @& ByteArray) (p k : Nat) (hp : p + k = m.size) (hk : k < 4) : UInt32 :=
+@[noinline] def partialWord (m : @& ByteArray) (p k : Nat) (hp : p + k = m.size) (hk : k < 4) :
+    UInt32 :=
   if h1 : k = 0 then 0x80000000
   else if h2 : k = 1 then (m[p]'(by omega)).toUInt32 <<< 24 ||| 0x800000
   else if h3 : k = 2 then
@@ -171,7 +176,8 @@ theorem add_toNat (o k : USize) (h : o.toNat + k.toNat < 4294967296) :
     (bytes.uget (o + 3) (by rw [add_toNat o 3 (by simp; omega)]; simp; omega))
 
 /-- `wordAt`, out of line: only the (>= 2^30-byte) fallback path uses it, so it is kept small. -/
-@[noinline] def wordAtN (bytes : @& ByteArray) (start j : Nat) (h : start + 4 * j + 3 < bytes.size) : UInt32 :=
+@[noinline] def wordAtN (bytes : @& ByteArray) (start j : Nat)
+    (h : start + 4 * j + 3 < bytes.size) : UInt32 :=
   wordAt bytes start j h
 
 /-! ## Zero allocations: the whole hash is one tail-recursive loop (spec-free, compact tail) -/
@@ -290,7 +296,8 @@ def zloop (fuel : Nat) (m : @& ByteArray) (out : ByteArray) (hout : out.size = 3
         24 G (by simp [size_put32]; omega)) 28 H (by simp [size_put32]; omega)
     | .last =>
       let bits : UInt64 := UInt64.ofNat m.size * 8
-      zloop fuel m out hout .done s ho 0 A B C D E F G H A B C D E F G H 0 0 0 0 0 0 0 0 0 0 0 0 0 0 (bits >>> 32).toUInt32 bits.toUInt32
+      zloop fuel m out hout .done s ho 0 A B C D E F G H A B C D E F G H 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+          (bits >>> 32).toUInt32 bits.toUInt32
     | .body =>
       if hf : s + 64 ≤ m.size then
         if hs : m.size < 1073741824 then
@@ -298,21 +305,36 @@ def zloop (fuel : Nat) (m : @& ByteArray) (out : ByteArray) (hout : out.size = 3
           have hoe : o.toNat = s := by simp [o, UInt32.toNat_toUSize]; omega
           zloop fuel m out hout .body (s + 64) (by omega) 0 A B C D E F G H A B C D E F G H
             (wordU m o (by omega) (by omega))
-            (wordU m (o + 4) (by rw [add_toNat o 4 (by simp; omega)]; simp; omega) (by rw [add_toNat o 4 (by simp; omega)]; simp; omega))
-            (wordU m (o + 8) (by rw [add_toNat o 8 (by simp; omega)]; simp; omega) (by rw [add_toNat o 8 (by simp; omega)]; simp; omega))
-            (wordU m (o + 12) (by rw [add_toNat o 12 (by simp; omega)]; simp; omega) (by rw [add_toNat o 12 (by simp; omega)]; simp; omega))
-            (wordU m (o + 16) (by rw [add_toNat o 16 (by simp; omega)]; simp; omega) (by rw [add_toNat o 16 (by simp; omega)]; simp; omega))
-            (wordU m (o + 20) (by rw [add_toNat o 20 (by simp; omega)]; simp; omega) (by rw [add_toNat o 20 (by simp; omega)]; simp; omega))
-            (wordU m (o + 24) (by rw [add_toNat o 24 (by simp; omega)]; simp; omega) (by rw [add_toNat o 24 (by simp; omega)]; simp; omega))
-            (wordU m (o + 28) (by rw [add_toNat o 28 (by simp; omega)]; simp; omega) (by rw [add_toNat o 28 (by simp; omega)]; simp; omega))
-            (wordU m (o + 32) (by rw [add_toNat o 32 (by simp; omega)]; simp; omega) (by rw [add_toNat o 32 (by simp; omega)]; simp; omega))
-            (wordU m (o + 36) (by rw [add_toNat o 36 (by simp; omega)]; simp; omega) (by rw [add_toNat o 36 (by simp; omega)]; simp; omega))
-            (wordU m (o + 40) (by rw [add_toNat o 40 (by simp; omega)]; simp; omega) (by rw [add_toNat o 40 (by simp; omega)]; simp; omega))
-            (wordU m (o + 44) (by rw [add_toNat o 44 (by simp; omega)]; simp; omega) (by rw [add_toNat o 44 (by simp; omega)]; simp; omega))
-            (wordU m (o + 48) (by rw [add_toNat o 48 (by simp; omega)]; simp; omega) (by rw [add_toNat o 48 (by simp; omega)]; simp; omega))
-            (wordU m (o + 52) (by rw [add_toNat o 52 (by simp; omega)]; simp; omega) (by rw [add_toNat o 52 (by simp; omega)]; simp; omega))
-            (wordU m (o + 56) (by rw [add_toNat o 56 (by simp; omega)]; simp; omega) (by rw [add_toNat o 56 (by simp; omega)]; simp; omega))
-            (wordU m (o + 60) (by rw [add_toNat o 60 (by simp; omega)]; simp; omega) (by rw [add_toNat o 60 (by simp; omega)]; simp; omega))
+            (wordU m (o + 4) (by rw [add_toNat o 4 (by simp; omega)]; simp; omega)
+                (by rw [add_toNat o 4 (by simp; omega)]; simp; omega))
+            (wordU m (o + 8) (by rw [add_toNat o 8 (by simp; omega)]; simp; omega)
+                (by rw [add_toNat o 8 (by simp; omega)]; simp; omega))
+            (wordU m (o + 12) (by rw [add_toNat o 12 (by simp; omega)]; simp; omega)
+                (by rw [add_toNat o 12 (by simp; omega)]; simp; omega))
+            (wordU m (o + 16) (by rw [add_toNat o 16 (by simp; omega)]; simp; omega)
+                (by rw [add_toNat o 16 (by simp; omega)]; simp; omega))
+            (wordU m (o + 20) (by rw [add_toNat o 20 (by simp; omega)]; simp; omega)
+                (by rw [add_toNat o 20 (by simp; omega)]; simp; omega))
+            (wordU m (o + 24) (by rw [add_toNat o 24 (by simp; omega)]; simp; omega)
+                (by rw [add_toNat o 24 (by simp; omega)]; simp; omega))
+            (wordU m (o + 28) (by rw [add_toNat o 28 (by simp; omega)]; simp; omega)
+                (by rw [add_toNat o 28 (by simp; omega)]; simp; omega))
+            (wordU m (o + 32) (by rw [add_toNat o 32 (by simp; omega)]; simp; omega)
+                (by rw [add_toNat o 32 (by simp; omega)]; simp; omega))
+            (wordU m (o + 36) (by rw [add_toNat o 36 (by simp; omega)]; simp; omega)
+                (by rw [add_toNat o 36 (by simp; omega)]; simp; omega))
+            (wordU m (o + 40) (by rw [add_toNat o 40 (by simp; omega)]; simp; omega)
+                (by rw [add_toNat o 40 (by simp; omega)]; simp; omega))
+            (wordU m (o + 44) (by rw [add_toNat o 44 (by simp; omega)]; simp; omega)
+                (by rw [add_toNat o 44 (by simp; omega)]; simp; omega))
+            (wordU m (o + 48) (by rw [add_toNat o 48 (by simp; omega)]; simp; omega)
+                (by rw [add_toNat o 48 (by simp; omega)]; simp; omega))
+            (wordU m (o + 52) (by rw [add_toNat o 52 (by simp; omega)]; simp; omega)
+                (by rw [add_toNat o 52 (by simp; omega)]; simp; omega))
+            (wordU m (o + 56) (by rw [add_toNat o 56 (by simp; omega)]; simp; omega)
+                (by rw [add_toNat o 56 (by simp; omega)]; simp; omega))
+            (wordU m (o + 60) (by rw [add_toNat o 60 (by simp; omega)]; simp; omega)
+                (by rw [add_toNat o 60 (by simp; omega)]; simp; omega))
         else
           zloop fuel m out hout .body (s + 64) (by omega) 0 A B C D E F G H A B C D E F G H
             (wordAtN m s 0 (by omega))
@@ -354,7 +376,8 @@ def zloop (fuel : Nat) (m : @& ByteArray) (out : ByteArray) (hout : out.size = 3
             w0 w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12 w13 (bits >>> 32).toUInt32 bits.toUInt32
         else
           zloop fuel m out hout .last s ho 0 A B C D E F G H A B C D E F G H
-            w0 w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12 w13 (tailWord m s r 14 hr) (tailWord m s r 15 hr)
+            w0 w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12 w13 (tailWord m s r 14 hr) (tailWord m s r 15
+                hr)
 
 /-- SHA-256 of `m`, written into `out` (in place when `out` is exclusive and 32 bytes; otherwise one fresh 32-byte buffer). -/
 def hashInto (m : @& ByteArray) (out : ByteArray) : ByteArray :=

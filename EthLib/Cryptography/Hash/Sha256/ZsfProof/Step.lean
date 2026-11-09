@@ -45,7 +45,8 @@ private theorem wU_k (m : ByteArray) (s k : Nat) (c : USize) (hc : c.toNat = 4 *
 
 
 /-- `.done`: the digest is written into `out`. -/
-theorem step_done (fuel : Nat) (m out : ByteArray) (hout : out.size = 32) (s : Nat) (ho : s ≤ m.size)
+theorem step_done (fuel : Nat) (m out : ByteArray) (hout : out.size = 32) (s : Nat) (ho : s ≤
+    m.size)
     (H S : State) (W : Window) :
     zloopS (fuel + 1) m out hout .done s ho 64 H S W = digestInto out hout (addS H S) := by
   unfold zloopS
@@ -54,7 +55,8 @@ theorem step_done (fuel : Nat) (m out : ByteArray) (hout : out.size = 32) (s : N
   rfl
 
 /-- `.last`: the zero-and-length block. -/
-theorem step_last (fuel : Nat) (m out : ByteArray) (hout : out.size = 32) (s : Nat) (ho : s ≤ m.size)
+theorem step_last (fuel : Nat) (m out : ByteArray) (hout : out.size = 32) (s : Nat) (ho : s ≤
+    m.size)
     (H S : State) (W : Window) :
     zloopS (fuel + 1) m out hout .last s ho 64 H S W =
       zloopS fuel m out hout .done s ho 0 (addS H S) (addS H S) (lenWin m) := by
@@ -64,7 +66,8 @@ theorem step_last (fuel : Nat) (m out : ByteArray) (hout : out.size = 32) (s : N
   rfl
 
 /-- `.body` with a full message block at `s` (either load path). -/
-theorem step_full (fuel : Nat) (m out : ByteArray) (hout : out.size = 32) (s : Nat) (ho : s ≤ m.size)
+theorem step_full (fuel : Nat) (m out : ByteArray) (hout : out.size = 32) (s : Nat) (ho : s ≤
+    m.size)
     (hf : s + 64 ≤ m.size) (H S : State) (W : Window) :
     zloopS (fuel + 1) m out hout .body s ho 64 H S W =
       zloopS fuel m out hout .body (s + 64) hf 0 (addS H S) (addS H S) (fullWin m s hf) := by
@@ -107,7 +110,8 @@ theorem step_tail_short (fuel : Nat) (m out : ByteArray) (hout : out.size = 32) 
 
 /-- `.body` with `56 ≤ r < 64` bytes left: the first of two last blocks, then `.last`. -/
 theorem step_tail_long (fuel : Nat) (m out : ByteArray) (hout : out.size = 32) (s r : Nat)
-    (ho : s ≤ m.size) (hr : s + r = m.size) (h56 : 56 ≤ r) (h64 : r < 64) (H S : State) (W : Window) :
+    (ho : s ≤ m.size) (hr : s + r = m.size) (h56 : 56 ≤ r) (h64 : r < 64) (H S : State) (W :
+        Window) :
     zloopS (fuel + 1) m out hout .body s ho 64 H S W =
       zloopS fuel m out hout .last s ho 0 (addS H S) (addS H S) (tailWinLong m s r hr) := by
   obtain rfl : r = m.size - s := by omega
