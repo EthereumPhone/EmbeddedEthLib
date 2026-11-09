@@ -186,7 +186,81 @@ The C reference is `embedded/sha256/ref.c`, a plain FIPS 180-4 implementation, n
 These were measured on a B-U585I-IOT02A (STM32U585, Cortex-M33) with code, data, arena and stack in the secure SRAM, read with the DWT cycle counter by `embedded/board/run_on_board.sh`.
 SRAM has no wait states and no cache sits in front of it: a load costs 2 cycles and the cycles do not depend on the clock (4 MHz and 160 MHz agreed to within 0.03 %).
 Code running from flash, behind the instruction cache and flash wait states, will have other cycle counts.
-**None of these runs used the code at the head of this fork.** Each row names what it ran.
+
+#### This fork's code
+
+The first three tables ran this fork's code at commit `4d4fce1a`, at 160 MHz.
+The images were built from this repository as [`embedded/README.md`](embedded/README.md) shows: `embedded/silicon/build.sh` with `-DPQ_MODE=0`, `1` or `2`, `-DARENA_BYTES=393216` and `-DCLK160` for leanSPHINCS, and `embedded/sha256/build.sh fast` or `spec` with `BUILDER=embedded/silicon/build.sh` and `-DCLK160` for SHA-256.
+The compiler flags are `-O2 -DNDEBUG`, as for QEMU.
+The generated C of the benchmark calls `signFast` for `sign`, `Keccak.Fast.keccak256IG` for `keccak256` and `Zsf.hashZ` for `Sha256.hash`, and the linked `decodeSignature` calls `readBytesP`.
+So the fast paths ran through the `@[csimp]` theorems.
+`keyGen` has no installed `@[csimp]`: key generation runs the specification's `keyGen` over the fast tweakable hash and the fast Keccak.
+
+All known answers passed on the board.
+The known-answer signature verifies, and the same signature with its last bit flipped does not.
+Signing gives the known-answer signature byte for byte, and key generation gives the known-answer public key.
+Two runs of the verify image agreed to within 16 cycles in each segment.
+
+leanSPHINCS at 160 MHz, cycles (and time):
+
+| operation | upstream code | this fork | ratio | projected for this fork | cycles per instruction, this fork |
+|---|---:|---:|---:|---:|---:|
+| decode the public key and the 7,740-byte signature | 1,266,303,743 (7.91 s) | 5,049,667 (31.6 ms) | 251× | 31.3 ms | 1.459 |
+| verify, valid signature (true) | 34,081,123 (213.0 ms) | 16,481,410 (103.0 ms) | 2.07× | 106.7 ms | 1.348 |
+| verify, tampered signature (false) | 34,220,964 (213.9 ms) | 16,621,365 (103.9 ms) | 2.06× | | 1.348 |
+| key generation | 17,898,791,133 (111.9 s) | 8,463,163,909 (52.9 s) | 2.11× | 54.9 s | 1.347 |
+| sign, then encode the signature | 64,182,435,221 (401.1 s) | 15,493,165,508 (96.8 s) | 4.14× | 100.4 s | 1.347 |
+
+The decode segment includes the copy of the inputs from the known-answer blob, in both columns.
+In the sign row, signing alone takes 15,491,490,942 cycles and `encodeSignature` takes 1,674,566 cycles (10.5 ms).
+The upstream columns come from the board run of upstream's code that the older table below summarises.
+The projection is this fork's QEMU instruction count times the cycles per instruction of upstream's code, and it was made before the board run.
+The board measured decode 0.8 % above the projection and the other operations 3.5 % to 3.6 % below it.
+The fork's code runs at about 1.35 cycles per instruction, and upstream's at 1.397.
+The cycles per instruction of decode and verify use the instruction counts of the QEMU twin of the same image (`embedded/silicon/link_qemu_twin.ld`, traced with `embedded/tools/count_run.sh`).
+Those of key generation and signing use the QEMU instruction-counter figures of the leanSPHINCS table above (6.284 G and 11.50 G).
+
+The pieces of a verification, same verify image (cycles):
+
+| piece | upstream code | this fork |
+|---|---:|---:|
+| Keccak-256 of 64 bytes (one permutation) | 46,151 | 22,747 |
+| one WOTS chain step (64-byte input) | 62,591 | 27,134 |
+| one FORS leaf (PRF of 80 bytes, then F of 64 bytes) | 125,921 | 55,691 |
+| one hypertree node hash (80 bytes) | 63,221 | 28,305 |
+| one WOTS+C public leaf (257 calls) | 17,376,955 | 8,205,901 |
+| T_v (1,072 bytes, 8 permutations) | 425,165 | 293,200 |
+| one WOTS+C encoding trial (68 bytes) | 83,934 | 48,587 |
+
+The arena peaks on the board equal the QEMU figures above: 96,680 B in verify mode, 105,400 B for signing and 21,592 B for key generation.
+Every freed byte read zero after the run (`nonzero_in_freed=0`).
+The linker wrap of `Keccak.Fast.keccak256IG` counted 1,246 calls in verify mode, 264,193 in key generation and 485,244 in signing.
+The cycle counts of key generation and signing exceed 2^32, so `bench_io_silicon.c` extends the 32-bit counter in software.
+Two checks show that no wrap was missed: the 64-bit totals agree with the 32-bit cycle word of `bench.h` modulo 2^32, and with the host's wall clock (62 s for key generation and 106 s for signing, each with about 9.5 s of loading and read-back).
+
+SHA-256 at 160 MHz, cycles, the same harness for both columns:
+
+| message | specification | zero-allocation form | ratio |
+|---|---:|---:|---:|
+| 3 bytes | 32,575 | 4,110 | 7.9× |
+| 64 bytes | 37,281 | 7,406 | 5.0× |
+| 1,072 bytes | 262,556 | 60,150 | 4.4× |
+| ten 64-byte messages | 379,953 | 81,470 | 4.7× |
+
+`fast` runs `Sha256.hash`, which the `@[csimp]` compiles to `Zsf.hashZ`.
+`Zsf.hashZ` is `Zsf.hashInto` into a copy of a shared 32-byte zero buffer, so it makes one allocation for each hash.
+Each segment holds one hash (ten in the last row) and one `pq_mark`.
+Both builds gave the same digests, and two runs of each image agreed to within 1 cycle in each segment.
+With the QEMU counts of the SHA-256 table above, the cycles per instruction are about 1.62 to 1.72 for the specification and 1.20 to 1.25 for the zero-allocation form.
+On the same day, with the same runner, the C reference `embedded/board/sha/ref_board.c` at `-O2` took 4,019.8 cycles for each 3-byte hash (the difference of a 1-hash and an 11-hash run, divided by 10).
+That agrees with the older table below.
+The single 3-byte hash of the zero-allocation form, with its `pq_mark` and its allocation, takes 1.02 times as long.
+The older table below gives 22,477.7 cycles for the specification.
+That figure came from a different, standalone harness and is the average of ten later hashes, so it is not comparable with the first hash of this harness.
+
+#### Older runs
+
+These runs did not use the code at the head of this fork. Each row names what it ran.
 
 SHA-256 of a 3-byte message, cycles per hash:
 
@@ -211,8 +285,8 @@ leanSPHINCS, upstream code (160 MHz), all known answers passing:
 | key generation | 17,898,791,133 | 111.9 s | 1.397 |
 | sign | 64,182,435,221 | 401.1 s | 1.397 |
 
-Projected for this fork (not measured): its QEMU instruction counts times the cycles per instruction measured above give about 31 ms to decode, 107 ms to verify, 55 s for key generation and 100 s to sign, at 160 MHz from SRAM.
-The interleaved Keccak has a different mix of instructions, so its cycles per instruction may differ.
+This fork's QEMU instruction counts times these cycles per instruction gave the projection column of the first table in "This fork's code".
+The projection was made before this fork ran on the board.
 
 ### A separate scheme: leanSPHINCS over the HASH accelerator
 
@@ -257,6 +331,7 @@ At the head of this fork:
 - `lake exe check-decls` checks 82,680 declarations: 27 findings, all listed in the baseline, none new, none stale. `scripts/test_check_decls.sh` passes.
 - `lake env leanchecker` replays every new or changed module (28 modules, at most 10 s each).
 - `embedded/hosttest` passes 685 vectors with 1,340 checks: every SHA-256 vector through six paths, every Keccak-256, Keccak-512 and Keccak-f[1600] vector, and every leanSPHINCS key generation, signing and verification vector of `tests/cryptography`.
+- On a B-U585I-IOT02A, from SRAM at 160 MHz, the leanSPHINCS and SHA-256 board images built from this repository pass every known answer (see "This fork's code" under "Cycles on the STM32U585").
 - `scripts/test_module_system.sh`, `scripts/soundness_facts.py --check`, `scripts/check_layers.py`, `scripts/check_docstrings.py`, `scripts/check_fork_cap.py` and `lake exe gen-bindings --check` pass.
 
 Not yet clean, and not run:
