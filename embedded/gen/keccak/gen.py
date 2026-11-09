@@ -2,35 +2,67 @@
 # Run regen.py rather than this script alone.
 import os
 import sys
+
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from layout import pack
-RC = [0x0000000000000001, 0x0000000000008082, 0x800000000000808A, 0x8000000080008000,
-  0x000000000000808B, 0x0000000080000001, 0x8000000080008081, 0x8000000000008009,
-  0x000000000000008A, 0x0000000000000088, 0x0000000080008009, 0x000000008000000A,
-  0x000000008000808B, 0x800000000000008B, 0x8000000000008089, 0x8000000000008003,
-  0x8000000000008002, 0x8000000000000080, 0x000000000000800A, 0x800000008000000A,
-  0x8000000080008081, 0x8000000000008080, 0x0000000080000001, 0x8000000080008008]
-RHO = [0,1,62,28,27,36,44,6,55,20,3,10,43,25,39,41,45,15,21,8,18,2,61,56,14]
-PI = [0,6,12,18,24,3,9,10,16,22,1,7,13,19,20,4,5,11,17,23,2,8,14,15,21]
+
+RC = [
+    0x0000000000000001,
+    0x0000000000008082,
+    0x800000000000808A,
+    0x8000000080008000,
+    0x000000000000808B,
+    0x0000000080000001,
+    0x8000000080008081,
+    0x8000000000008009,
+    0x000000000000008A,
+    0x0000000000000088,
+    0x0000000080008009,
+    0x000000008000000A,
+    0x000000008000808B,
+    0x800000000000008B,
+    0x8000000000008089,
+    0x8000000000008003,
+    0x8000000000008002,
+    0x8000000000000080,
+    0x000000000000800A,
+    0x800000008000000A,
+    0x8000000080008081,
+    0x8000000000008080,
+    0x0000000080000001,
+    0x8000000080008008,
+]
+RHO = [0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56, 14]
+PI = [0, 6, 12, 18, 24, 3, 9, 10, 16, 22, 1, 7, 13, 19, 20, 4, 5, 11, 17, 23, 2, 8, 14, 15, 21]
 L = range(25)
+
+
 def rnd(i, o, s, rc, ind="  "):
-    """lets computing output lanes {o}0..24 from input lanes {i}0..24; temporaries suffixed s."""
+    """Lets computing output lanes {o}0..24 from input lanes {i}0..24; temporaries suffixed s."""
     out = []
     for x in range(5):
-        out.append(f"{ind}let c{x}{s} := {i}{x} ^^^ {i}{x+5} ^^^ {i}{x+10} ^^^ {i}{x+15} ^^^ {i}{x+20}")
+        out.append(
+            f"{ind}let c{x}{s} := {i}{x} ^^^ {i}{x + 5} ^^^ {i}{x + 10} ^^^ {i}{x + 15} ^^^ {i}{x + 20}"
+        )
     for x in range(5):
-        out.append(f"{ind}let d{x}{s} := c{(x+4)%5}{s} ^^^ rotl c{(x+1)%5}{s} 1")
+        out.append(f"{ind}let d{x}{s} := c{(x + 4) % 5}{s} ^^^ rotl c{(x + 1) % 5}{s} 1")
     for k in L:
-        out.append(f"{ind}let r{k}{s} := rotl ({i}{k} ^^^ d{k%5}{s}) {RHO[k]}")
+        out.append(f"{ind}let r{k}{s} := rotl ({i}{k} ^^^ d{k % 5}{s}) {RHO[k]}")
     for y in range(5):
         for x in range(5):
-            k = 5*y + x
-            p = lambda xx: f"r{PI[5*y + xx % 5]}{s}"
-            e = f"{p(x)} ^^^ (~~~{p(x+1)} &&& {p(x+2)})"
-            if k == 0: e = f"({e}) ^^^ {rc}"
+            k = 5 * y + x
+
+            def p(xx, y=y):
+                return f"r{PI[5 * y + xx % 5]}{s}"
+
+            e = f"{p(x)} ^^^ (~~~{p(x + 1)} &&& {p(x + 2)})"
+            if k == 0:
+                e = f"({e}) ^^^ {rc}"
             out.append(f"{ind}let {o}{k} := {e}")
     return out
+
+
 lines = []
 w = lines.append
 w("""module
@@ -76,10 +108,11 @@ open EthLib.Cryptography.Hash.Keccak
 
 /-- `RC[i]` as match arms, so it compiles to a switch rather than a boxed-array lookup. -/
 def rcAt : UInt32 → UInt64""")
-for k, c in enumerate(RC): w(f"  | {k} => 0x{c:016X}")
+for k, c in enumerate(RC):
+    w(f"  | {k} => 0x{c:016X}")
 w("  | _ => 0\n")
 # loop version: one round per tail call, fuel n, round index i.
-w(f"/-- `n` more rounds from round `i`, one round per tail call. -/")
+w("/-- `n` more rounds from round `i`, one round per tail call. -/")
 w(pack("def loop1 : Nat → UInt32 → (", [f"a{k}" for k in L], " ", "    ", " : UInt64) → State"))
 w(pack("  | 0, _, ", [f"a{k}" for k in L], ", ", "      ", " =>"))
 w(pack("    ⟨", [f"a{k}" for k in L], ", ", "      ", "⟩"))
@@ -87,7 +120,7 @@ w(pack("  | n + 1, i, ", [f"a{k}" for k in L], ", ", "      ", " =>"))
 lines += rnd("a", "e", "", "rcAt i", "    ")
 w(pack("    loop1 n (i + 1) ", [f"e{k}" for k in L], " ", "      ") + "\n")
 # loop2: two rounds per tail call
-w(f"/-- `2n` more rounds from round `i`, two rounds per tail call. -/")
+w("/-- `2n` more rounds from round `i`, two rounds per tail call. -/")
 w(pack("def loop2 : Nat → UInt32 → (", [f"a{k}" for k in L], " ", "    ", " : UInt64) → State"))
 w(pack("  | 0, _, ", [f"a{k}" for k in L], ", ", "      ", " =>"))
 w(pack("    ⟨", [f"a{k}" for k in L], ", ", "      ", "⟩"))

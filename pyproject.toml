@@ -109,16 +109,22 @@ known-third-party = ["snappy", "ssz"]
 "benchmarks/*.py" = ["B008", "N803", "N812", "N814"]
 # The evaluator dispatches on the name of each `ast` node class.
 "bindings/python/tests/precompile/extract_alt_bn128_cases.py" = ["N802"]
+# This fork's embedded tools are terse scripts: generators of Lean code and counters of traces.
+# They keep their short names, long template lines and printf formatting, and have no docstrings.
+# What a generator writes is Lean code, which the build and the kernel check.
+"embedded/**" = [
+  "C405", "D100", "D103", "E402", "E501", "E731", "E741", "N816", "UP031",
+]
 
 [tool.codespell]
 # Names in the code: a re-encoding, plural data, a serializer, a truncated status, a regex,
-# and "Caf" before the escaped byte of "Café".
-ignore-words-list = "caf,datas,ommit,reencode,ser,statu"
+# "Caf" before the escaped byte of "Café", and "toI", a Lean name that a generator of this fork writes.
+ignore-words-list = "caf,datas,ommit,reencode,ser,statu,toi"
 
 [tool.ty.environment]
 python-version = "3.12"
-# The package, and the directories whose modules the suites and the scripts import by bare name.
-root = ["bindings/python", "bindings/python/tests", "scripts"]
+# The package, and the directories whose modules the suites, the scripts and the Keccak generators import by bare name.
+root = ["bindings/python", "bindings/python/tests", "scripts", "embedded/gen/keccak"]
 
 [tool.ty.src]
 # The benchmarks and the key generator import the reference specifications,

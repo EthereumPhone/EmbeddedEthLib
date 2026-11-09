@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
 """Generate FastProofI.lean: proof that the bit-interleaved keccak256I equals EthLib keccak256."""
-import re, sys, os
+
+import os
+import sys
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.dont_write_bytecode = True
 sys.path.insert(0, HERE)
 import gen_i
 from layout import pack
+
 # The first round of `loopI2`, as gen_i.py emits it into Fast.lean.
 round_lines = gen_i.rnd("a", "b", "_0", "rcE i", "rcO i", "    ")
-assert all(l.startswith('    let ') for l in round_lines), round_lines[:3]
+assert all(l.startswith("    let ") for l in round_lines), round_lines[:3]
 L = range(25)
 fieldsI = []
 for k in L:
-    fieldsI += [f'e{k}', f'o{k}']
+    fieldsI += [f"e{k}", f"o{k}"]
 
 out = []
 P = out.append
-P('''module
+P("""module
 
 public import EthLib.Cryptography.Hash.Keccak.FastProof
 
@@ -46,30 +50,56 @@ The proof has three steps:
 
 namespace EthLib.Cryptography.Hash.Keccak.Fast
 open EthLib.Cryptography.Hash.Keccak
-''')
+""")
 
-fin = ("(simp; try (ac_nf; simp only [Bool.xor_comm, Bool.xor_left_comm, xor_cancel_left,\n"
-       "      Bool.xor_self, Bool.false_xor]))")
+fin = (
+    "(simp; try (ac_nf; simp only [Bool.xor_comm, Bool.xor_left_comm, xor_cancel_left,\n"
+    "      Bool.xor_self, Bool.false_xor]))"
+)
+
+
 # `rcases (by omega : j = 0 ∨ … ∨ j = n - 1) with h|…|h`, wrapped, for a case split on `j < n`.
 def cases(n):
-    return (pack("  rcases (by omega : ", [f"j = {k}" for k in range(n)], " ∨ ", "      ", ") with")
-            + "\n    " + "|".join(["h"] * n))
-P('''/-! ## Bits of the interleave and deinterleave maps -/
+    return (
+        pack("  rcases (by omega : ", [f"j = {k}" for k in range(n)], " ∨ ", "      ", ") with")
+        + "\n    "
+        + "|".join(["h"] * n)
+    )
+
+
+P("""/-! ## Bits of the interleave and deinterleave maps -/
 
 theorem xor_cancel_left (a b : Bool) : (a ^^ (a ^^ b)) = b := by cases a <;> cases b <;> rfl
-''')
-for name, unf, rhs in [
-    ('ilvE64_bit (v : UInt64) (j : Nat) (hj : j < 32) :\n    (ilvE64 v).toBitVec.getLsbD j = v.toBitVec.getLsbD (2 * j)', 'ilvE64 ilvE shuf', None),
-    ('ilvO64_bit (v : UInt64) (j : Nat) (hj : j < 32) :\n    (ilvO64 v).toBitVec.getLsbD j = v.toBitVec.getLsbD (2 * j + 1)', 'ilvO64 ilvO shuf', None),
-    ('dlvLo_bit (e o : UInt32) (j : Nat) (hj : j < 32) :\n    (dlvLo e o).toBitVec.getLsbD j =\n      if j % 2 = 0 then e.toBitVec.getLsbD (j / 2) else o.toBitVec.getLsbD (j / 2)', 'dlvLo unshuf', None),
-    ('dlvHi_bit (e o : UInt32) (j : Nat) (hj : j < 32) :\n    (dlvHi e o).toBitVec.getLsbD j =\n      if j % 2 = 0 then e.toBitVec.getLsbD (16 + j / 2) else o.toBitVec.getLsbD (16 + j / 2)', 'dlvHi unshuf', None)]:
-    P(f'''set_option maxHeartbeats 4000000 in
+""")
+for name, unf, _rhs in [
+    (
+        "ilvE64_bit (v : UInt64) (j : Nat) (hj : j < 32) :\n    (ilvE64 v).toBitVec.getLsbD j = v.toBitVec.getLsbD (2 * j)",
+        "ilvE64 ilvE shuf",
+        None,
+    ),
+    (
+        "ilvO64_bit (v : UInt64) (j : Nat) (hj : j < 32) :\n    (ilvO64 v).toBitVec.getLsbD j = v.toBitVec.getLsbD (2 * j + 1)",
+        "ilvO64 ilvO shuf",
+        None,
+    ),
+    (
+        "dlvLo_bit (e o : UInt32) (j : Nat) (hj : j < 32) :\n    (dlvLo e o).toBitVec.getLsbD j =\n      if j % 2 = 0 then e.toBitVec.getLsbD (j / 2) else o.toBitVec.getLsbD (j / 2)",
+        "dlvLo unshuf",
+        None,
+    ),
+    (
+        "dlvHi_bit (e o : UInt32) (j : Nat) (hj : j < 32) :\n    (dlvHi e o).toBitVec.getLsbD j =\n      if j % 2 = 0 then e.toBitVec.getLsbD (16 + j / 2) else o.toBitVec.getLsbD (16 + j / 2)",
+        "dlvHi unshuf",
+        None,
+    ),
+]:
+    P(f"""set_option maxHeartbeats 4000000 in
 theorem {name} := by
   unfold {unf}
 {cases(32)} <;> subst h <;>
     {fin}
-''')
-P('''theorem ilvE64_xor (a b : UInt64) : ilvE64 (a ^^^ b) = ilvE64 a ^^^ ilvE64 b := by
+""")
+P("""theorem ilvE64_xor (a b : UInt64) : ilvE64 (a ^^^ b) = ilvE64 a ^^^ ilvE64 b := by
   apply UInt32.toBitVec_inj.1; apply BitVec.eq_of_getLsbD_eq; intro j hj
   simp only [UInt32.toBitVec_xor, BitVec.getLsbD_xor, ilvE64_bit _ _ hj, UInt64.toBitVec_xor]
 
@@ -113,9 +143,9 @@ theorem dlv64_ilv (v : UInt64) : dlv64 (ilvE64 v) (ilvO64 v) = v := by
   split
   · rw [ilvE64_bit _ _ (by omega)]; congr 1; omega
   · rw [ilvO64_bit _ _ (by omega)]; congr 1; omega
-''')
+""")
 
-P('''/-! ## Rotations -/
+P("""/-! ## Rotations -/
 
 theorem rotl_bit (a : UInt64) (n : Nat) (hn : n < 64) (k : Nat) (hk : k < 64) :
     (rotl a (UInt64.ofNat n)).toBitVec.getLsbD k = a.toBitVec.getLsbD ((k + 64 - n) % 64) := by
@@ -187,27 +217,72 @@ theorem ilvO64_rotl_odd (a : UInt64) (m : Nat) (hm : m < 32) :
   rw [ilvO64_bit _ _ hj, rotl_bit _ _ (by omega) _ (by omega), rol32_bit _ _ hm _ hj,
     ilvE64_bit _ _ (Nat.mod_lt _ (by decide))]
   congr 1; omega
-''')
-offs = sorted(set([1, 0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56, 14]))
+""")
+offs = sorted(
+    set(
+        [
+            1,
+            0,
+            1,
+            62,
+            28,
+            27,
+            36,
+            44,
+            6,
+            55,
+            20,
+            3,
+            10,
+            43,
+            25,
+            39,
+            41,
+            45,
+            15,
+            21,
+            8,
+            18,
+            2,
+            61,
+            56,
+            14,
+        ]
+    )
+)
 rotnames = []
 for n in offs:
     m = n // 2
     if n % 2 == 0:
         if m == 0:
-            P(f'theorem ilvE64_rotl_{n} (a : UInt64) : ilvE64 (rotl a {n}) = ilvE64 a := by\n  rw [show ({n} : UInt64) = UInt64.ofNat (2 * {m}) from rfl, ilvE64_rotl_even a {m} (by decide)]\n  exact rol32_zero _')
-            P(f'theorem ilvO64_rotl_{n} (a : UInt64) : ilvO64 (rotl a {n}) = ilvO64 a := by\n  rw [show ({n} : UInt64) = UInt64.ofNat (2 * {m}) from rfl, ilvO64_rotl_even a {m} (by decide)]\n  exact rol32_zero _')
+            P(
+                f"theorem ilvE64_rotl_{n} (a : UInt64) : ilvE64 (rotl a {n}) = ilvE64 a := by\n  rw [show ({n} : UInt64) = UInt64.ofNat (2 * {m}) from rfl, ilvE64_rotl_even a {m} (by decide)]\n  exact rol32_zero _"
+            )
+            P(
+                f"theorem ilvO64_rotl_{n} (a : UInt64) : ilvO64 (rotl a {n}) = ilvO64 a := by\n  rw [show ({n} : UInt64) = UInt64.ofNat (2 * {m}) from rfl, ilvO64_rotl_even a {m} (by decide)]\n  exact rol32_zero _"
+            )
         else:
-            P(f'theorem ilvE64_rotl_{n} (a : UInt64) : ilvE64 (rotl a {n}) = rol32 (ilvE64 a) {m} :=\n  ilvE64_rotl_even a {m} (by decide)')
-            P(f'theorem ilvO64_rotl_{n} (a : UInt64) : ilvO64 (rotl a {n}) = rol32 (ilvO64 a) {m} :=\n  ilvO64_rotl_even a {m} (by decide)')
+            P(
+                f"theorem ilvE64_rotl_{n} (a : UInt64) : ilvE64 (rotl a {n}) = rol32 (ilvE64 a) {m} :=\n  ilvE64_rotl_even a {m} (by decide)"
+            )
+            P(
+                f"theorem ilvO64_rotl_{n} (a : UInt64) : ilvO64 (rotl a {n}) = rol32 (ilvO64 a) {m} :=\n  ilvO64_rotl_even a {m} (by decide)"
+            )
     else:
-        P(f'theorem ilvE64_rotl_{n} (a : UInt64) : ilvE64 (rotl a {n}) = rol32 (ilvO64 a) {m+1} :=\n  ilvE64_rotl_odd a {m} (by decide)')
+        P(
+            f"theorem ilvE64_rotl_{n} (a : UInt64) : ilvE64 (rotl a {n}) = rol32 (ilvO64 a) {m + 1} :=\n  ilvE64_rotl_odd a {m} (by decide)"
+        )
         if m == 0:
-            P(f'theorem ilvO64_rotl_{n} (a : UInt64) : ilvO64 (rotl a {n}) = ilvE64 a := by\n  rw [show ({n} : UInt64) = UInt64.ofNat (2 * {m} + 1) from rfl, ilvO64_rotl_odd a {m} (by decide)]\n  exact rol32_zero _')
+            P(
+                f"theorem ilvO64_rotl_{n} (a : UInt64) : ilvO64 (rotl a {n}) = ilvE64 a := by\n  rw [show ({n} : UInt64) = UInt64.ofNat (2 * {m} + 1) from rfl, ilvO64_rotl_odd a {m} (by decide)]\n  exact rol32_zero _"
+            )
         else:
-            P(f'theorem ilvO64_rotl_{n} (a : UInt64) : ilvO64 (rotl a {n}) = rol32 (ilvE64 a) {m} :=\n  ilvO64_rotl_odd a {m} (by decide)')
-    rotnames += [f'ilvE64_rotl_{n}', f'ilvO64_rotl_{n}']
-P('')
-P('''/-! ## Round constants -/
+            P(
+                f"theorem ilvO64_rotl_{n} (a : UInt64) : ilvO64 (rotl a {n}) = rol32 (ilvE64 a) {m} :=\n  ilvO64_rotl_odd a {m} (by decide)"
+            )
+    rotnames += [f"ilvE64_rotl_{n}", f"ilvO64_rotl_{n}"]
+P("")
+P("""/-! ## Round constants -/
 
 theorem rcE_all : ∀ k : Fin 24, ilvE64 (rcAt (UInt32.ofNat k.val)) = rcE (UInt32.ofNat k.val) := by
   decide
@@ -222,27 +297,42 @@ theorem rcE_eq (i : UInt32) (h : i.toNat < 24) : ilvE64 (rcAt i) = rcE i := by
 theorem rcO_eq (i : UInt32) (h : i.toNat < 24) : ilvO64 (rcAt i) = rcO i := by
   have := rcO_all ⟨i.toNat, h⟩
   simpa only [UInt32.ofNat_toNat] using this
-''')
+""")
 
 # toI / ofI
-P('/-! ## The interleaved state and one interleaved round -/\n')
-P('/-- The interleaved form of a state: lane `k` becomes its even bits `ek` and its odd bits `ok`. -/')
-P('def toI (A : State) : StateI :=\n' + pack('  ⟨', [f'ilvE64 A.a{k}, ilvO64 A.a{k}' for k in L], ', ', '    ', '⟩') + '\n')
-P('/-- Back from the interleaved form. -/')
-P('def ofI (S : StateI) : State :=\n' + pack('  ⟨', [f'dlv64 S.e{k} S.o{k}' for k in L], ', ', '    ', '⟩') + '\n')
-P('theorem ofI_toI (A : State) : ofI (toI A) = A := by\n  cases A; simp only [ofI, toI, dlv64_ilv]\n')
-P('/-- One interleaved round: the first half of the body of `loopI2`, verbatim. -/')
-P('def roundI (i : UInt32) (S : StateI) : StateI :=')
+P("/-! ## The interleaved state and one interleaved round -/\n")
+P(
+    "/-- The interleaved form of a state: lane `k` becomes its even bits `ek` and its odd bits `ok`. -/"
+)
+P(
+    "def toI (A : State) : StateI :=\n"
+    + pack("  ⟨", [f"ilvE64 A.a{k}, ilvO64 A.a{k}" for k in L], ", ", "    ", "⟩")
+    + "\n"
+)
+P("/-- Back from the interleaved form. -/")
+P(
+    "def ofI (S : StateI) : State :=\n"
+    + pack("  ⟨", [f"dlv64 S.e{k} S.o{k}" for k in L], ", ", "    ", "⟩")
+    + "\n"
+)
+P(
+    "theorem ofI_toI (A : State) : ofI (toI A) = A := by\n  cases A; simp only [ofI, toI, dlv64_ilv]\n"
+)
+P("/-- One interleaved round: the first half of the body of `loopI2`, verbatim. -/")
+P("def roundI (i : UInt32) (S : StateI) : StateI :=")
 for k in L:
-    P(f'  let a{k}e := S.e{k}')
-    P(f'  let a{k}o := S.o{k}')
+    P(f"  let a{k}e := S.e{k}")
+    P(f"  let a{k}o := S.o{k}")
 for l in round_lines:
     P(l[2:])
-P(pack('  ⟨', [f'b{k}e, b{k}o' for k in L], ', ', '    ', '⟩') + '\n')
-P('/-- `loopI2` on the fields of an interleaved state. -/')
-P('def loopIS (n : Nat) (i : UInt32) (S : StateI) : StateI :=\n'
-  + pack('  loopI2 n i ', [f'S.e{k} S.o{k}' for k in L], ' ', '    ') + '\n')
-P('''theorem keccakPI_eq (S : StateI) : keccakPI S = loopIS 12 0 S := rfl
+P(pack("  ⟨", [f"b{k}e, b{k}o" for k in L], ", ", "    ", "⟩") + "\n")
+P("/-- `loopI2` on the fields of an interleaved state. -/")
+P(
+    "def loopIS (n : Nat) (i : UInt32) (S : StateI) : StateI :=\n"
+    + pack("  loopI2 n i ", [f"S.e{k} S.o{k}" for k in L], " ", "    ")
+    + "\n"
+)
+P("""theorem keccakPI_eq (S : StateI) : keccakPI S = loopIS 12 0 S := rfl
 
 theorem loopIS_zero (i : UInt32) (S : StateI) : loopIS 0 i S = S := by
   cases S; rfl
@@ -253,18 +343,28 @@ theorem loopIS_succ (n : Nat) (i : UInt32) (S : StateI) :
   simp only [loopIS]
   rw [loopI2]
   rfl
-''')
-P('set_option maxHeartbeats 4000000 in')
-P('''theorem roundI_toI (i : UInt32) (h : i.toNat < 24) (A : State) :
+""")
+P("set_option maxHeartbeats 4000000 in")
+P(
+    """theorem roundI_toI (i : UInt32) (h : i.toNat < 24) (A : State) :
     roundI i (toI A) = toI (round ⟨i.toNat, h⟩ A) := by
   cases A
   have h' : i.toNat < ROUNDS := h
   simp only [roundI, toI, round, iota, chi, pi, rho, theta, rc_of i h']
-''' + pack('  simp only [ilvE64_xor, ilvO64_xor, ilvE64_andn, ilvO64_andn, rcE_eq i h, rcO_eq i h,\n    ',
-    rotnames, ', ', '    ', ']') + '''
-''')
+"""
+    + pack(
+        "  simp only [ilvE64_xor, ilvO64_xor, ilvE64_andn, ilvO64_andn, rcE_eq i h, rcO_eq i h,\n    ",
+        rotnames,
+        ", ",
+        "    ",
+        "]",
+    )
+    + """
+"""
+)
 
-P("""theorem loopIS_toI : ∀ (n : Nat) (i : UInt32) (A : State), i.toNat + 2 * n = 24 →
+P(
+    """theorem loopIS_toI : ∀ (n : Nat) (i : UInt32) (A : State), i.toNat + 2 * n = 24 →
     loopIS n i (toI A) = toI (keccakF.roundsFrom i.toNat A) := by
   intro n
   induction n with
@@ -292,7 +392,9 @@ theorem lo32 (b0 b1 b2 b3 b4 b5 b6 b7 : UInt8) :
       b7.toUInt64 <<< 56).toUInt32 =
     b0.toUInt32 ||| b1.toUInt32 <<< 8 ||| b2.toUInt32 <<< 16 ||| b3.toUInt32 <<< 24 := by
   apply UInt32.toBitVec_inj.1; apply BitVec.eq_of_getLsbD_eq; intro j hj
-""" + cases(32) + """ <;> subst h <;> simp
+"""
+    + cases(32)
+    + """ <;> subst h <;> simp
 
 theorem hi32 (b0 b1 b2 b3 b4 b5 b6 b7 : UInt8) :
     ((b0.toUInt64 ||| b1.toUInt64 <<< 8 ||| b2.toUInt64 <<< 16 ||| b3.toUInt64 <<< 24 |||
@@ -300,7 +402,9 @@ theorem hi32 (b0 b1 b2 b3 b4 b5 b6 b7 : UInt8) :
       b7.toUInt64 <<< 56) >>> 32).toUInt32 =
     b4.toUInt32 ||| b5.toUInt32 <<< 8 ||| b6.toUInt32 <<< 16 ||| b7.toUInt32 <<< 24 := by
   apply UInt32.toBitVec_inj.1; apply BitVec.eq_of_getLsbD_eq; intro j hj
-""" + cases(32) + """ <;> subst h <;> simp
+"""
+    + cases(32)
+    + """ <;> subst h <;> simp
 
 theorem ilvE_lane {bytes : ByteArray} (hs : bytes.size < USize.size) (p : Nat)
     (h : p + 136 ≤ bytes.size) (q : USize) (hq : q = USize.ofNat p) (c c' : Nat)
@@ -347,7 +451,8 @@ theorem absorbI_toI (bytes : ByteArray) (hs : bytes.size < USize.size) :
     simp (disch := decide) only [blockLane_RATE, Nat.reduceMul]
     simp (disch := decide) only [ilvE_lane hs, ilvO_lane hs]
 
-""")
+"""
+)
 
 P("""theorem sq0 (x y : UInt32) : (x.toUInt64 ||| y.toUInt64 <<< 32).toUInt8 = (x >>> 0).toUInt8 := by
   apply UInt8.toBitVec_inj.1; apply BitVec.eq_of_getLsbD_eq; intro j hj
@@ -452,11 +557,15 @@ theorem keccak256IG_eq : keccak256IG = keccak256 := by
 @[csimp] theorem keccak256_eq_keccak256IG : keccak256 = keccak256IG := keccak256IG_eq.symm
 
 """)
-text = '\n'.join(out)
-D = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, '..', '..', '..', 'EthLib', 'Cryptography', 'Hash', 'Keccak')
-i1 = text.index('/-! ## Bits of the interleave')
-i2 = text.index('/-! ## The interleaved state')
-i3 = text.index('/-! ## The sponge')
+text = "\n".join(out)
+D = (
+    sys.argv[1]
+    if len(sys.argv) > 1
+    else os.path.join(HERE, "..", "..", "..", "EthLib", "Cryptography", "Hash", "Keccak")
+)
+i1 = text.index("/-! ## Bits of the interleave")
+i2 = text.index("/-! ## The interleaved state")
+i3 = text.index("/-! ## The sponge")
 head = text[:i1]
 pre = """@[expose] public section
 
@@ -464,11 +573,25 @@ namespace EthLib.Cryptography.Hash.Keccak.Fast
 open EthLib.Cryptography.Hash.Keccak
 
 """
-end = '\nend EthLib.Cryptography.Hash.Keccak.Fast\n'
-os.makedirs(os.path.join(D, 'FastProofI'), exist_ok=True)
-open(os.path.join(D, 'FastProofI', 'Bits.lean'), 'w').write(
-  'module\n\npublic import EthLib.Cryptography.Hash.Keccak.FastProof\n\n/-! Bit lemmas for the interleaved Keccak: interleave and deinterleave, rotations, round constants.\n\nembedded/gen/keccak/gen_proofI.py generates this file. -/\n\n' + pre + text[i1:i2] + end)
-open(os.path.join(D, 'FastProofI', 'Round.lean'), 'w').write(
-  'module\n\npublic import EthLib.Cryptography.Hash.Keccak.FastProofI.Bits\n\n/-! The interleaved permutation equals the spec permutation: `keccakPI (toI A) = toI (keccakF A)`.\n\nembedded/gen/keccak/gen_proofI.py generates this file. -/\n\n' + pre + text[i2:i3] + end)
-open(os.path.join(D, 'FastProofI.lean'), 'w').write(
-  head.replace('public import EthLib.Cryptography.Hash.Keccak.FastProof\n', 'public import EthLib.Cryptography.Hash.Keccak.FastProofI.Round\n') + text[i3:] + end)
+end = "\nend EthLib.Cryptography.Hash.Keccak.Fast\n"
+os.makedirs(os.path.join(D, "FastProofI"), exist_ok=True)
+open(os.path.join(D, "FastProofI", "Bits.lean"), "w").write(
+    "module\n\npublic import EthLib.Cryptography.Hash.Keccak.FastProof\n\n/-! Bit lemmas for the interleaved Keccak: interleave and deinterleave, rotations, round constants.\n\nembedded/gen/keccak/gen_proofI.py generates this file. -/\n\n"
+    + pre
+    + text[i1:i2]
+    + end
+)
+open(os.path.join(D, "FastProofI", "Round.lean"), "w").write(
+    "module\n\npublic import EthLib.Cryptography.Hash.Keccak.FastProofI.Bits\n\n/-! The interleaved permutation equals the spec permutation: `keccakPI (toI A) = toI (keccakF A)`.\n\nembedded/gen/keccak/gen_proofI.py generates this file. -/\n\n"
+    + pre
+    + text[i2:i3]
+    + end
+)
+open(os.path.join(D, "FastProofI.lean"), "w").write(
+    head.replace(
+        "public import EthLib.Cryptography.Hash.Keccak.FastProof\n",
+        "public import EthLib.Cryptography.Hash.Keccak.FastProofI.Round\n",
+    )
+    + text[i3:]
+    + end
+)

@@ -35,8 +35,11 @@ def main(argv):
     if argv[1:] == ["--check"]:
         with tempfile.TemporaryDirectory() as tmp:
             generate(tmp)
-            differ = [m for m in MODULES
-                      if not filecmp.cmp(os.path.join(tmp, m), os.path.join(TARGET, m), shallow=False)]
+            differ = [
+                m
+                for m in MODULES
+                if not filecmp.cmp(os.path.join(tmp, m), os.path.join(TARGET, m), shallow=False)
+            ]
         for m in differ:
             print(f"differs from its generated text: EthLib/Cryptography/Hash/Keccak/{m}")
         if not differ:

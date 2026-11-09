@@ -2,53 +2,94 @@
 # gen_proofI.py imports `rnd` from here. Run regen.py rather than this script alone.
 import os
 import sys
+
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from layout import pack
-RC = [0x0000000000000001, 0x0000000000008082, 0x800000000000808A, 0x8000000080008000,
-  0x000000000000808B, 0x0000000080000001, 0x8000000080008081, 0x8000000000008009,
-  0x000000000000008A, 0x0000000000000088, 0x0000000080008009, 0x000000008000000A,
-  0x000000008000808B, 0x800000000000008B, 0x8000000000008089, 0x8000000000008003,
-  0x8000000000008002, 0x8000000000000080, 0x000000000000800A, 0x800000008000000A,
-  0x8000000080008081, 0x8000000000008080, 0x0000000080000001, 0x8000000080008008]
-RHO = [0,1,62,28,27,36,44,6,55,20,3,10,43,25,39,41,45,15,21,8,18,2,61,56,14]
-PI = [0,6,12,18,24,3,9,10,16,22,1,7,13,19,20,4,5,11,17,23,2,8,14,15,21]
+
+RC = [
+    0x0000000000000001,
+    0x0000000000008082,
+    0x800000000000808A,
+    0x8000000080008000,
+    0x000000000000808B,
+    0x0000000080000001,
+    0x8000000080008081,
+    0x8000000000008009,
+    0x000000000000008A,
+    0x0000000000000088,
+    0x0000000080008009,
+    0x000000008000000A,
+    0x000000008000808B,
+    0x800000000000008B,
+    0x8000000000008089,
+    0x8000000000008003,
+    0x8000000000008002,
+    0x8000000000000080,
+    0x000000000000800A,
+    0x800000008000000A,
+    0x8000000080008081,
+    0x8000000000008080,
+    0x0000000080000001,
+    0x8000000080008008,
+]
+RHO = [0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56, 14]
+PI = [0, 6, 12, 18, 24, 3, 9, 10, 16, 22, 1, 7, 13, 19, 20, 4, 5, 11, 17, 23, 2, 8, 14, 15, 21]
+
+
 def split(v):
     e = o = 0
     for i in range(32):
-        e |= ((v >> (2*i)) & 1) << i
-        o |= ((v >> (2*i+1)) & 1) << i
+        e |= ((v >> (2 * i)) & 1) << i
+        o |= ((v >> (2 * i + 1)) & 1) << i
     return e, o
-def r32(x, m): return x if m == 0 else f"rol32 {x} {m}"
-def rot(te, to, n):
-    if n % 2 == 0: return r32(te, n//2), r32(to, n//2)
+
+
+def r32(x, m):
+    return x if m == 0 else f"rol32 {x} {m}"
+
+
+def rot(ev, od, n):
+    if n % 2 == 0:
+        return r32(ev, n // 2), r32(od, n // 2)
     m = (n - 1) // 2
-    return r32(to, m + 1), r32(te, m)
+    return r32(od, m + 1), r32(ev, m)
+
+
 def rnd(i, o, s, rce, rco, ind):
     out = []
     for h in "eo":
         for x in range(5):
-            out.append(f"{ind}let c{x}{h}{s} := {i}{x}{h} ^^^ {i}{x+5}{h} ^^^ {i}{x+10}{h} ^^^ {i}{x+15}{h} ^^^ {i}{x+20}{h}")
+            out.append(
+                f"{ind}let c{x}{h}{s} := {i}{x}{h} ^^^ {i}{x + 5}{h} ^^^ {i}{x + 10}{h} ^^^ {i}{x + 15}{h} ^^^ {i}{x + 20}{h}"
+            )
     for x in range(5):
-        out.append(f"{ind}let d{x}e{s} := c{(x+4)%5}e{s} ^^^ rol32 c{(x+1)%5}o{s} 1")
-        out.append(f"{ind}let d{x}o{s} := c{(x+4)%5}o{s} ^^^ c{(x+1)%5}e{s}")
+        out.append(f"{ind}let d{x}e{s} := c{(x + 4) % 5}e{s} ^^^ rol32 c{(x + 1) % 5}o{s} 1")
+        out.append(f"{ind}let d{x}o{s} := c{(x + 4) % 5}o{s} ^^^ c{(x + 1) % 5}e{s}")
     for k in range(25):
-        te, to = f"({i}{k}e ^^^ d{k%5}e{s})", f"({i}{k}o ^^^ d{k%5}o{s})"
-        re_, ro = rot(te, to, RHO[k])
+        ev, od = f"({i}{k}e ^^^ d{k % 5}e{s})", f"({i}{k}o ^^^ d{k % 5}o{s})"
+        re_, ro = rot(ev, od, RHO[k])
         out.append(f"{ind}let r{k}e{s} := {re_}")
         out.append(f"{ind}let r{k}o{s} := {ro}")
     for h, rc in (("e", rce), ("o", rco)):
         for y in range(5):
             for x in range(5):
-                k = 5*y + x
-                p = lambda xx: f"r{PI[5*y + xx % 5]}{h}{s}"
-                e = f"{p(x)} ^^^ (~~~{p(x+1)} &&& {p(x+2)})"
-                if k == 0: e = f"({e}) ^^^ {rc}"
+                k = 5 * y + x
+
+                def p(xx, y=y, h=h):
+                    return f"r{PI[5 * y + xx % 5]}{h}{s}"
+
+                e = f"{p(x)} ^^^ (~~~{p(x + 1)} &&& {p(x + 2)})"
+                if k == 0:
+                    e = f"({e}) ^^^ {rc}"
                 out.append(f"{ind}let {o}{k}{h} := {e}")
     return out
+
+
 L = []
 w = L.append
-w("""/-! ## Bit-interleaved form: each lane as two `UInt32`, its even and its odd bits
+w(
+    """/-! ## Bit-interleaved form: each lane as two `UInt32`, its even and its odd bits
 
 A 64-bit rotation by `2m` rotates both halves by `m`.
 
@@ -60,29 +101,44 @@ The rotations fold into the operands of `eor` and `bic`. -/
 
 /-- The interleaved state: field `ek` holds the even bits of lane `k`, and `ok` its odd bits. -/
 structure StateI where
-""" + pack("  (", [f"e{k} o{k}" for k in range(25)], " ", "    ", " : UInt32)") + """
+"""
+    + pack("  (", [f"e{k} o{k}" for k in range(25)], " ", "    ", " : UInt32)")
+    + """
 
 @[inline] def rol32 (x : UInt32) (n : UInt32) : UInt32 := (x <<< n) ||| (x >>> (32 - n))
-""")
+"""
+)
 w("def rcE : UInt32 → UInt32")
-for k, c in enumerate(RC): w(f"  | {k} => 0x{split(c)[0]:08X}")
+for k, c in enumerate(RC):
+    w(f"  | {k} => 0x{split(c)[0]:08X}")
 w("  | _ => 0\n")
 w("def rcO : UInt32 → UInt32")
-for k, c in enumerate(RC): w(f"  | {k} => 0x{split(c)[1]:08X}")
+for k, c in enumerate(RC):
+    w(f"  | {k} => 0x{split(c)[1]:08X}")
 w("  | _ => 0\n")
 w("/-- `2n` more rounds from round `i`, two per tail call, on the interleaved lanes. -/")
 pairs = lambda p: [f"{p}{k}e, {p}{k}o" for k in range(25)]
-w(pack("def loopI2 : Nat → UInt32 → (", [f"a{k}e a{k}o" for k in range(25)], " ", "    ",
-       " : UInt32) → StateI"))
+w(
+    pack(
+        "def loopI2 : Nat → UInt32 → (",
+        [f"a{k}e a{k}o" for k in range(25)],
+        " ",
+        "    ",
+        " : UInt32) → StateI",
+    )
+)
 w(pack("  | 0, _, ", pairs("a"), ", ", "      ", " =>"))
 w(pack("    ⟨", pairs("a"), ", ", "      ", "⟩"))
 w(pack("  | n + 1, i, ", pairs("a"), ", ", "      ", " =>"))
 L.extend(rnd("a", "b", "_0", "rcE i", "rcO i", "    "))
 L.extend(rnd("b", "z", "_1", "rcE (i + 1)", "rcO (i + 1)", "    "))
 w(pack("    loopI2 n (i + 2) ", [f"z{k}e z{k}o" for k in range(25)], " ", "      ") + "\n")
-w("""/-- Keccak-f[1600] on the interleaved state. -/
+w(
+    """/-- Keccak-f[1600] on the interleaved state. -/
 def keccakPI (S : StateI) : StateI :=
-""" + pack("  loopI2 12 0 ", [f"S.e{k} S.o{k}" for k in range(25)], " ", "    ") + """
+"""
+    + pack("  loopI2 12 0 ", [f"S.e{k} S.o{k}" for k in range(25)], " ", "    ")
+    + """
 
 /-- The even bits of the 64-bit lane `hi:lo`, compressed into a word. -/
 @[inline] def shuf (x : UInt32) : UInt32 :=
@@ -116,11 +172,14 @@ def keccakPI (S : StateI) : StateI :=
 @[inline] def ilvO64 (v : UInt64) : UInt32 := ilvO v.toUInt32 (v >>> 32).toUInt32
 @[inline] def dlv64 (e o : UInt32) : UInt64 :=
   (dlvLo e o).toUInt64 ||| ((dlvHi e o).toUInt64 <<< 32)
-""")
+"""
+)
 absorb = ",\n      ".join(
-    f"S.{h}{k} ^^^ ilv{h.upper()} (lane32 bytes p h q rfl {8*k} (by decide))\n"
-    f"        (lane32 bytes p h q rfl {8*k+4} (by decide))"
-    for k in range(17) for h in "eo")
+    f"S.{h}{k} ^^^ ilv{h.upper()} (lane32 bytes p h q rfl {8 * k} (by decide))\n"
+    f"        (lane32 bytes p h q rfl {8 * k + 4} (by decide))"
+    for k in range(17)
+    for h in "eo"
+)
 rest = pack("      ", [f"S.e{k}, S.o{k}" for k in range(17, 25)], ", ", "      ", "⟩)")
 w(f"""/-- Absorb `n` blocks of 136 bytes from `p` on into the interleaved state. -/
 def absorbI (bytes : @& ByteArray) : (n p : Nat) → p + 136 * n ≤ bytes.size → StateI → StateI
@@ -138,7 +197,7 @@ def squeezeI (S : StateI) : Vector UInt8 DIGEST_LEN :=
   let b0 := dlvLo S.e1 S.o1; let b1 := dlvHi S.e1 S.o1
   let c0 := dlvLo S.e2 S.o2; let c1 := dlvHi S.e2 S.o2
   let d0 := dlvLo S.e3 S.o3; let d1 := dlvHi S.e3 S.o3
-{pack("  ⟨#[", [f"({v} >>> {8*j}).toUInt8" for v in ["a0","a1","b0","b1","c0","c1","d0","d1"] for j in range(4)], ", ", "     ", "], rfl⟩")}
+{pack("  ⟨#[", [f"({v} >>> {8 * j}).toUInt8" for v in ["a0", "a1", "b0", "b1", "c0", "c1", "d0", "d1"] for j in range(4)], ", ", "     ", "], rfl⟩")}
 
 {pack("def zeroI : StateI := ⟨", ["0"] * 50, ", ", "  ", "⟩")}
 
@@ -150,6 +209,7 @@ def keccak256I (msg : ByteArray) : Vector UInt8 DIGEST_LEN :=
 """)
 if __name__ == "__main__":
     import sys
+
     src = open(sys.argv[1]).read()
     end = "end EthLib.Cryptography.Hash.Keccak.Fast"
     src = src.replace(end, "\n".join(L) + "\n" + end)
