@@ -12,7 +12,7 @@ What is different:
 - **The declaration check lists the substitutions.** Upstream's `lake exe check-decls` fails on any `@[csimp]`. This fork lists exactly its own in [`scripts/check_decls_baseline.txt`](scripts/check_decls_baseline.txt), and [SOUNDNESS.md](SOUNDNESS.md) section B5 says what that trusts.
 
 The Lean package is still called `EthLib` and every module keeps its name, so Lean code that imports EthLib builds against the fork unchanged.
-The Python bindings were not tested against the fork (see "Verification of this fork" in [EMBEDDED.md](EMBEDDED.md)).
+Upstream's Python suites pass against the fork on Python 3.12 and 3.11, including the weekly slow suite; "Verification of this fork" in [EMBEDDED.md](EMBEDDED.md) lists what ran and what did not.
 [EMBEDDED.md](EMBEDDED.md) lists every fast path with its theorems, the measured results and their caveats.
 
 The rest of this file is upstream's README.

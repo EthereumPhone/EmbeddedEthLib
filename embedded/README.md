@@ -187,4 +187,4 @@ lake build hosttest
 
 It shares the repository's resolved dependencies (`packagesDir`), so it downloads nothing.
 It checks every SHA-256 vector through six paths (`Hash.sha256`, `Sha256.hash`, `Sha256.hash32`, and `Sha256.Zsf.hashInto` with a fresh, an empty and a reused buffer), every Keccak-256, Keccak-512 and Keccak-f[1600] vector, and every leanSPHINCS key generation, signing and verification vector.
-It calls the library functions, which the C exports wrap, because loading the Exports shared library as a plugin while elaborating the test failed with an undefined symbol (`lp_EthLib_EthLib_Base_ChainConfig_mainnet`), which was not investigated.
+It calls the library functions, which the C exports wrap, so it needs no shared library (EMBEDDED.md's caveats say why the Exports library cannot be loaded on its own).
