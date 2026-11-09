@@ -1,6 +1,10 @@
 # Writes EthLib/Cryptography/Hash/Keccak/Fast.lean (Keccak-f[1600], padding, lane reads); gen_i.py appends to it.
 # Run regen.py rather than this script alone.
+import os
 import sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from layout import pack
 RC = [0x0000000000000001, 0x0000000000008082, 0x800000000000808A, 0x8000000080008000,
   0x000000000000808B, 0x0000000080000001, 0x8000000080008081, 0x8000000000008009,
   0x000000000000008A, 0x0000000000000088, 0x0000000080008009, 0x000000008000000A,
@@ -27,7 +31,6 @@ def rnd(i, o, s, rc, ind="  "):
             if k == 0: e = f"({e}) ^^^ {rc}"
             out.append(f"{ind}let {o}{k} := {e}")
     return out
-A = lambda p: " ".join(f"{p}{k}" for k in L)
 lines = []
 w = lines.append
 w("""module
@@ -76,20 +79,22 @@ def rcAt : UInt32 → UInt64""")
 for k, c in enumerate(RC): w(f"  | {k} => 0x{c:016X}")
 w("  | _ => 0\n")
 # loop version: one round per tail call, fuel n, round index i.
-w(f"""/-- `n` more rounds from round `i`, one round per tail call. -/
-def loop1 : Nat → UInt32 → (a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24 : UInt64) → State
-  | 0, _, {", ".join(f"a{k}" for k in L)} => ⟨{", ".join(f"a{k}" for k in L)}⟩
-  | n + 1, i, {", ".join(f"a{k}" for k in L)} =>""")
+w(f"/-- `n` more rounds from round `i`, one round per tail call. -/")
+w(pack("def loop1 : Nat → UInt32 → (", [f"a{k}" for k in L], " ", "    ", " : UInt64) → State"))
+w(pack("  | 0, _, ", [f"a{k}" for k in L], ", ", "      ", " =>"))
+w(pack("    ⟨", [f"a{k}" for k in L], ", ", "      ", "⟩"))
+w(pack("  | n + 1, i, ", [f"a{k}" for k in L], ", ", "      ", " =>"))
 lines += rnd("a", "e", "", "rcAt i", "    ")
-w(f"    loop1 n (i + 1) {A('e')}\n")
+w(pack("    loop1 n (i + 1) ", [f"e{k}" for k in L], " ", "      ") + "\n")
 # loop2: two rounds per tail call
-w(f"""/-- `2n` more rounds from round `i`, two rounds per tail call. -/
-def loop2 : Nat → UInt32 → (a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24 : UInt64) → State
-  | 0, _, {", ".join(f"a{k}" for k in L)} => ⟨{", ".join(f"a{k}" for k in L)}⟩
-  | n + 1, i, {", ".join(f"a{k}" for k in L)} =>""")
+w(f"/-- `2n` more rounds from round `i`, two rounds per tail call. -/")
+w(pack("def loop2 : Nat → UInt32 → (", [f"a{k}" for k in L], " ", "    ", " : UInt64) → State"))
+w(pack("  | 0, _, ", [f"a{k}" for k in L], ", ", "      ", " =>"))
+w(pack("    ⟨", [f"a{k}" for k in L], ", ", "      ", "⟩"))
+w(pack("  | n + 1, i, ", [f"a{k}" for k in L], ", ", "      ", " =>"))
 lines += rnd("a", "b", "_0", "rcAt i", "    ")
 lines += rnd("b", "e", "_1", "rcAt (i + 1)", "    ")
-w(f"    loop2 n (i + 2) {A('e')}\n")
+w(pack("    loop2 n (i + 2) ", [f"e{k}" for k in L], " ", "      ") + "\n")
 w("""/-- Keccak-f[1600], one round per tail call. -/
 def keccakF1 (A : State) : State :=
   loop1 24 0 A.a0 A.a1 A.a2 A.a3 A.a4 A.a5 A.a6 A.a7 A.a8 A.a9 A.a10 A.a11 A.a12 A.a13 A.a14
@@ -129,7 +134,8 @@ w("""/-! ## Lane reads without bounds checks or `Nat` arithmetic -/
 theorem idx_lt {p s : Nat} (h : p + 136 ≤ s) (c : Nat) (hc : c < 136) :
     (USize.ofNat p + USize.ofNat c).toNat < s := by
   rw [USize.toNat_add]
-  have h1 := Nat.mod_le ((USize.ofNat p).toNat + (USize.ofNat c).toNat) (2 ^ System.Platform.numBits)
+  have h1 :=
+    Nat.mod_le ((USize.ofNat p).toNat + (USize.ofNat c).toNat) (2 ^ System.Platform.numBits)
   have h2 : (USize.ofNat p).toNat ≤ p := by rw [USize.toNat_ofNat']; exact Nat.mod_le _ _
   have h3 : (USize.ofNat c).toNat ≤ c := by rw [USize.toNat_ofNat']; exact Nat.mod_le _ _
   omega

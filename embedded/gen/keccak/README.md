@@ -26,3 +26,4 @@ python3 embedded/gen/keccak/regen.py --check
 The check regenerates the modules into a temporary directory and compares each one byte for byte.
 It exits with status 1 and names every module that differs.
 `FastProof.lean` is not generated.
+`layout.py` breaks the long runs of names and arguments into lines of at most 100 characters, the limit of `scripts/check_lean_layout.py`.

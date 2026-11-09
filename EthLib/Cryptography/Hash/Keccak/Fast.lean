@@ -68,9 +68,14 @@ def rcAt : UInt32 → UInt64
   | _ => 0
 
 /-- `n` more rounds from round `i`, one round per tail call. -/
-def loop1 : Nat → UInt32 → (a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24 : UInt64) → State
-  | 0, _, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23, a24 => ⟨a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23, a24⟩
-  | n + 1, i, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23, a24 =>
+def loop1 : Nat → UInt32 → (a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19
+    a20 a21 a22 a23 a24 : UInt64) → State
+  | 0, _, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19,
+      a20, a21, a22, a23, a24 =>
+    ⟨a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20,
+      a21, a22, a23, a24⟩
+  | n + 1, i, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18,
+      a19, a20, a21, a22, a23, a24 =>
     let c0 := a0 ^^^ a5 ^^^ a10 ^^^ a15 ^^^ a20
     let c1 := a1 ^^^ a6 ^^^ a11 ^^^ a16 ^^^ a21
     let c2 := a2 ^^^ a7 ^^^ a12 ^^^ a17 ^^^ a22
@@ -131,12 +136,18 @@ def loop1 : Nat → UInt32 → (a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a1
     let e22 := r14 ^^^ (~~~r15 &&& r21)
     let e23 := r15 ^^^ (~~~r21 &&& r2)
     let e24 := r21 ^^^ (~~~r2 &&& r8)
-    loop1 n (i + 1) e0 e1 e2 e3 e4 e5 e6 e7 e8 e9 e10 e11 e12 e13 e14 e15 e16 e17 e18 e19 e20 e21 e22 e23 e24
+    loop1 n (i + 1) e0 e1 e2 e3 e4 e5 e6 e7 e8 e9 e10 e11 e12 e13 e14 e15 e16 e17 e18 e19 e20 e21
+      e22 e23 e24
 
 /-- `2n` more rounds from round `i`, two rounds per tail call. -/
-def loop2 : Nat → UInt32 → (a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24 : UInt64) → State
-  | 0, _, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23, a24 => ⟨a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23, a24⟩
-  | n + 1, i, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23, a24 =>
+def loop2 : Nat → UInt32 → (a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19
+    a20 a21 a22 a23 a24 : UInt64) → State
+  | 0, _, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19,
+      a20, a21, a22, a23, a24 =>
+    ⟨a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20,
+      a21, a22, a23, a24⟩
+  | n + 1, i, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18,
+      a19, a20, a21, a22, a23, a24 =>
     let c0_0 := a0 ^^^ a5 ^^^ a10 ^^^ a15 ^^^ a20
     let c1_0 := a1 ^^^ a6 ^^^ a11 ^^^ a16 ^^^ a21
     let c2_0 := a2 ^^^ a7 ^^^ a12 ^^^ a17 ^^^ a22
@@ -257,7 +268,8 @@ def loop2 : Nat → UInt32 → (a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a1
     let e22 := r14_1 ^^^ (~~~r15_1 &&& r21_1)
     let e23 := r15_1 ^^^ (~~~r21_1 &&& r2_1)
     let e24 := r21_1 ^^^ (~~~r2_1 &&& r8_1)
-    loop2 n (i + 2) e0 e1 e2 e3 e4 e5 e6 e7 e8 e9 e10 e11 e12 e13 e14 e15 e16 e17 e18 e19 e20 e21 e22 e23 e24
+    loop2 n (i + 2) e0 e1 e2 e3 e4 e5 e6 e7 e8 e9 e10 e11 e12 e13 e14 e15 e16 e17 e18 e19 e20 e21
+      e22 e23 e24
 
 /-- Keccak-f[1600], one round per tail call. -/
 def keccakF1 (A : State) : State :=
@@ -298,7 +310,8 @@ def squeezeF (S : State) : Vector UInt8 DIGEST_LEN :=
 theorem idx_lt {p s : Nat} (h : p + 136 ≤ s) (c : Nat) (hc : c < 136) :
     (USize.ofNat p + USize.ofNat c).toNat < s := by
   rw [USize.toNat_add]
-  have h1 := Nat.mod_le ((USize.ofNat p).toNat + (USize.ofNat c).toNat) (2 ^ System.Platform.numBits)
+  have h1 :=
+    Nat.mod_le ((USize.ofNat p).toNat + (USize.ofNat c).toNat) (2 ^ System.Platform.numBits)
   have h2 : (USize.ofNat p).toNat ≤ p := by rw [USize.toNat_ofNat']; exact Nat.mod_le _ _
   have h3 : (USize.ofNat c).toNat ≤ c := by rw [USize.toNat_ofNat']; exact Nat.mod_le _ _
   omega
@@ -316,11 +329,19 @@ theorem idx_lt {p s : Nat} (h : p + 136 ≤ s) (c : Nat) (hc : c < 136) :
 
 /-! ## Bit-interleaved form: each lane as two `UInt32`, its even and its odd bits
 
-A 64-bit rotation by `2m` rotates both halves by `m`; by `2m + 1` it swaps them and rotates by `m + 1` and `m`. So every operation of a round is a 32-bit operation, which Thumb-2 does in one instruction, with the rotations folded into the operands of `eor`/`bic`. -/
+A 64-bit rotation by `2m` rotates both halves by `m`.
 
-/-- The state in bit-interleaved form: field `kE` holds the even bits of lane `k`, `kO` the odd bits. -/
+A rotation by `2m + 1` swaps the halves, and rotates them by `m + 1` and by `m`.
+
+So every operation of a round is a 32-bit operation, which Thumb-2 does in one instruction.
+
+The rotations fold into the operands of `eor` and `bic`. -/
+
+/-- The interleaved state: field `ek` holds the even bits of lane `k`, and `ok` its odd bits. -/
 structure StateI where
-  (e0 o0 e1 o1 e2 o2 e3 o3 e4 o4 e5 o5 e6 o6 e7 o7 e8 o8 e9 o9 e10 o10 e11 o11 e12 o12 e13 o13 e14 o14 e15 o15 e16 o16 e17 o17 e18 o18 e19 o19 e20 o20 e21 o21 e22 o22 e23 o23 e24 o24 : UInt32)
+  (e0 o0 e1 o1 e2 o2 e3 o3 e4 o4 e5 o5 e6 o6 e7 o7 e8 o8 e9 o9 e10 o10 e11 o11 e12 o12 e13 o13
+    e14 o14 e15 o15 e16 o16 e17 o17 e18 o18 e19 o19 e20 o20 e21 o21 e22 o22 e23 o23
+    e24 o24 : UInt32)
 
 @[inline] def rol32 (x : UInt32) (n : UInt32) : UInt32 := (x <<< n) ||| (x >>> (32 - n))
 
@@ -379,9 +400,21 @@ def rcO : UInt32 → UInt32
   | _ => 0
 
 /-- `2n` more rounds from round `i`, two per tail call, on the interleaved lanes. -/
-def loopI2 : Nat → UInt32 → (a0e a0o a1e a1o a2e a2o a3e a3o a4e a4o a5e a5o a6e a6o a7e a7o a8e a8o a9e a9o a10e a10o a11e a11o a12e a12o a13e a13o a14e a14o a15e a15o a16e a16o a17e a17o a18e a18o a19e a19o a20e a20o a21e a21o a22e a22o a23e a23o a24e a24o : UInt32) → StateI
-  | 0, _, a0e, a0o, a1e, a1o, a2e, a2o, a3e, a3o, a4e, a4o, a5e, a5o, a6e, a6o, a7e, a7o, a8e, a8o, a9e, a9o, a10e, a10o, a11e, a11o, a12e, a12o, a13e, a13o, a14e, a14o, a15e, a15o, a16e, a16o, a17e, a17o, a18e, a18o, a19e, a19o, a20e, a20o, a21e, a21o, a22e, a22o, a23e, a23o, a24e, a24o => ⟨a0e, a0o, a1e, a1o, a2e, a2o, a3e, a3o, a4e, a4o, a5e, a5o, a6e, a6o, a7e, a7o, a8e, a8o, a9e, a9o, a10e, a10o, a11e, a11o, a12e, a12o, a13e, a13o, a14e, a14o, a15e, a15o, a16e, a16o, a17e, a17o, a18e, a18o, a19e, a19o, a20e, a20o, a21e, a21o, a22e, a22o, a23e, a23o, a24e, a24o⟩
-  | n + 1, i, a0e, a0o, a1e, a1o, a2e, a2o, a3e, a3o, a4e, a4o, a5e, a5o, a6e, a6o, a7e, a7o, a8e, a8o, a9e, a9o, a10e, a10o, a11e, a11o, a12e, a12o, a13e, a13o, a14e, a14o, a15e, a15o, a16e, a16o, a17e, a17o, a18e, a18o, a19e, a19o, a20e, a20o, a21e, a21o, a22e, a22o, a23e, a23o, a24e, a24o =>
+def loopI2 : Nat → UInt32 → (a0e a0o a1e a1o a2e a2o a3e a3o a4e a4o a5e a5o a6e a6o a7e a7o a8e a8o
+    a9e a9o a10e a10o a11e a11o a12e a12o a13e a13o a14e a14o a15e a15o a16e a16o a17e a17o
+    a18e a18o a19e a19o a20e a20o a21e a21o a22e a22o a23e a23o a24e a24o : UInt32) → StateI
+  | 0, _, a0e, a0o, a1e, a1o, a2e, a2o, a3e, a3o, a4e, a4o, a5e, a5o, a6e, a6o, a7e, a7o, a8e, a8o,
+      a9e, a9o, a10e, a10o, a11e, a11o, a12e, a12o, a13e, a13o, a14e, a14o, a15e, a15o, a16e, a16o,
+      a17e, a17o, a18e, a18o, a19e, a19o, a20e, a20o, a21e, a21o, a22e, a22o, a23e, a23o,
+      a24e, a24o =>
+    ⟨a0e, a0o, a1e, a1o, a2e, a2o, a3e, a3o, a4e, a4o, a5e, a5o, a6e, a6o, a7e, a7o, a8e, a8o,
+      a9e, a9o, a10e, a10o, a11e, a11o, a12e, a12o, a13e, a13o, a14e, a14o, a15e, a15o, a16e, a16o,
+      a17e, a17o, a18e, a18o, a19e, a19o, a20e, a20o, a21e, a21o, a22e, a22o, a23e, a23o,
+      a24e, a24o⟩
+  | n + 1, i, a0e, a0o, a1e, a1o, a2e, a2o, a3e, a3o, a4e, a4o, a5e, a5o, a6e, a6o, a7e, a7o,
+      a8e, a8o, a9e, a9o, a10e, a10o, a11e, a11o, a12e, a12o, a13e, a13o, a14e, a14o, a15e, a15o,
+      a16e, a16o, a17e, a17o, a18e, a18o, a19e, a19o, a20e, a20o, a21e, a21o, a22e, a22o,
+      a23e, a23o, a24e, a24o =>
     let c0e_0 := a0e ^^^ a5e ^^^ a10e ^^^ a15e ^^^ a20e
     let c1e_0 := a1e ^^^ a6e ^^^ a11e ^^^ a16e ^^^ a21e
     let c2e_0 := a2e ^^^ a7e ^^^ a12e ^^^ a17e ^^^ a22e
@@ -622,11 +655,16 @@ def loopI2 : Nat → UInt32 → (a0e a0o a1e a1o a2e a2o a3e a3o a4e a4o a5e a5o
     let z22o := r14o_1 ^^^ (~~~r15o_1 &&& r21o_1)
     let z23o := r15o_1 ^^^ (~~~r21o_1 &&& r2o_1)
     let z24o := r21o_1 ^^^ (~~~r2o_1 &&& r8o_1)
-    loopI2 n (i + 2) z0e z0o z1e z1o z2e z2o z3e z3o z4e z4o z5e z5o z6e z6o z7e z7o z8e z8o z9e z9o z10e z10o z11e z11o z12e z12o z13e z13o z14e z14o z15e z15o z16e z16o z17e z17o z18e z18o z19e z19o z20e z20o z21e z21o z22e z22o z23e z23o z24e z24o
+    loopI2 n (i + 2) z0e z0o z1e z1o z2e z2o z3e z3o z4e z4o z5e z5o z6e z6o z7e z7o z8e z8o z9e z9o
+      z10e z10o z11e z11o z12e z12o z13e z13o z14e z14o z15e z15o z16e z16o z17e z17o z18e z18o
+      z19e z19o z20e z20o z21e z21o z22e z22o z23e z23o z24e z24o
 
 /-- Keccak-f[1600] on the interleaved state. -/
 def keccakPI (S : StateI) : StateI :=
-  loopI2 12 0 S.e0 S.o0 S.e1 S.o1 S.e2 S.o2 S.e3 S.o3 S.e4 S.o4 S.e5 S.o5 S.e6 S.o6 S.e7 S.o7 S.e8 S.o8 S.e9 S.o9 S.e10 S.o10 S.e11 S.o11 S.e12 S.o12 S.e13 S.o13 S.e14 S.o14 S.e15 S.o15 S.e16 S.o16 S.e17 S.o17 S.e18 S.o18 S.e19 S.o19 S.e20 S.o20 S.e21 S.o21 S.e22 S.o22 S.e23 S.o23 S.e24 S.o24
+  loopI2 12 0 S.e0 S.o0 S.e1 S.o1 S.e2 S.o2 S.e3 S.o3 S.e4 S.o4 S.e5 S.o5 S.e6 S.o6 S.e7 S.o7
+    S.e8 S.o8 S.e9 S.o9 S.e10 S.o10 S.e11 S.o11 S.e12 S.o12 S.e13 S.o13 S.e14 S.o14 S.e15 S.o15
+    S.e16 S.o16 S.e17 S.o17 S.e18 S.o18 S.e19 S.o19 S.e20 S.o20 S.e21 S.o21 S.e22 S.o22 S.e23 S.o23
+    S.e24 S.o24
 
 /-- The even bits of the 64-bit lane `hi:lo`, compressed into a word. -/
 @[inline] def shuf (x : UInt32) : UInt32 :=
@@ -651,12 +689,15 @@ def keccakPI (S : StateI) : StateI :=
   x ^^^ t ^^^ (t <<< 1)
 
 @[inline] def ilvE (lo hi : UInt32) : UInt32 := (shuf lo &&& (0xFFFF : UInt32)) ||| (shuf hi <<< 16)
-@[inline] def ilvO (lo hi : UInt32) : UInt32 := (shuf lo >>> 16) ||| (shuf hi &&& (0xFFFF0000 : UInt32))
+@[inline] def ilvO (lo hi : UInt32) : UInt32 :=
+  (shuf lo >>> 16) ||| (shuf hi &&& (0xFFFF0000 : UInt32))
 @[inline] def dlvLo (e o : UInt32) : UInt32 := unshuf ((e &&& (0xFFFF : UInt32)) ||| (o <<< 16))
-@[inline] def dlvHi (e o : UInt32) : UInt32 := unshuf ((e >>> 16) ||| (o &&& (0xFFFF0000 : UInt32)))
+@[inline] def dlvHi (e o : UInt32) : UInt32 :=
+  unshuf ((e >>> 16) ||| (o &&& (0xFFFF0000 : UInt32)))
 @[inline] def ilvE64 (v : UInt64) : UInt32 := ilvE v.toUInt32 (v >>> 32).toUInt32
 @[inline] def ilvO64 (v : UInt64) : UInt32 := ilvO v.toUInt32 (v >>> 32).toUInt32
-@[inline] def dlv64 (e o : UInt32) : UInt64 := (dlvLo e o).toUInt64 ||| ((dlvHi e o).toUInt64 <<< 32)
+@[inline] def dlv64 (e o : UInt32) : UInt64 :=
+  (dlvLo e o).toUInt64 ||| ((dlvHi e o).toUInt64 <<< 32)
 
 /-- Absorb `n` blocks of 136 bytes from `p` on into the interleaved state. -/
 def absorbI (bytes : @& ByteArray) : (n p : Nat) → p + 136 * n ≤ bytes.size → StateI → StateI
@@ -665,24 +706,76 @@ def absorbI (bytes : @& ByteArray) : (n p : Nat) → p + 136 * n ≤ bytes.size 
     have h : p + 136 ≤ bytes.size := by omega
     let q := USize.ofNat p
     absorbI bytes n (p + 136) (by omega) (keccakPI ⟨
-      S.e0 ^^^ ilvE (lane32 bytes p h q rfl 0 (by decide)) (lane32 bytes p h q rfl 4 (by decide)), S.o0 ^^^ ilvO (lane32 bytes p h q rfl 0 (by decide)) (lane32 bytes p h q rfl 4 (by decide)),
-      S.e1 ^^^ ilvE (lane32 bytes p h q rfl 8 (by decide)) (lane32 bytes p h q rfl 12 (by decide)), S.o1 ^^^ ilvO (lane32 bytes p h q rfl 8 (by decide)) (lane32 bytes p h q rfl 12 (by decide)),
-      S.e2 ^^^ ilvE (lane32 bytes p h q rfl 16 (by decide)) (lane32 bytes p h q rfl 20 (by decide)), S.o2 ^^^ ilvO (lane32 bytes p h q rfl 16 (by decide)) (lane32 bytes p h q rfl 20 (by decide)),
-      S.e3 ^^^ ilvE (lane32 bytes p h q rfl 24 (by decide)) (lane32 bytes p h q rfl 28 (by decide)), S.o3 ^^^ ilvO (lane32 bytes p h q rfl 24 (by decide)) (lane32 bytes p h q rfl 28 (by decide)),
-      S.e4 ^^^ ilvE (lane32 bytes p h q rfl 32 (by decide)) (lane32 bytes p h q rfl 36 (by decide)), S.o4 ^^^ ilvO (lane32 bytes p h q rfl 32 (by decide)) (lane32 bytes p h q rfl 36 (by decide)),
-      S.e5 ^^^ ilvE (lane32 bytes p h q rfl 40 (by decide)) (lane32 bytes p h q rfl 44 (by decide)), S.o5 ^^^ ilvO (lane32 bytes p h q rfl 40 (by decide)) (lane32 bytes p h q rfl 44 (by decide)),
-      S.e6 ^^^ ilvE (lane32 bytes p h q rfl 48 (by decide)) (lane32 bytes p h q rfl 52 (by decide)), S.o6 ^^^ ilvO (lane32 bytes p h q rfl 48 (by decide)) (lane32 bytes p h q rfl 52 (by decide)),
-      S.e7 ^^^ ilvE (lane32 bytes p h q rfl 56 (by decide)) (lane32 bytes p h q rfl 60 (by decide)), S.o7 ^^^ ilvO (lane32 bytes p h q rfl 56 (by decide)) (lane32 bytes p h q rfl 60 (by decide)),
-      S.e8 ^^^ ilvE (lane32 bytes p h q rfl 64 (by decide)) (lane32 bytes p h q rfl 68 (by decide)), S.o8 ^^^ ilvO (lane32 bytes p h q rfl 64 (by decide)) (lane32 bytes p h q rfl 68 (by decide)),
-      S.e9 ^^^ ilvE (lane32 bytes p h q rfl 72 (by decide)) (lane32 bytes p h q rfl 76 (by decide)), S.o9 ^^^ ilvO (lane32 bytes p h q rfl 72 (by decide)) (lane32 bytes p h q rfl 76 (by decide)),
-      S.e10 ^^^ ilvE (lane32 bytes p h q rfl 80 (by decide)) (lane32 bytes p h q rfl 84 (by decide)), S.o10 ^^^ ilvO (lane32 bytes p h q rfl 80 (by decide)) (lane32 bytes p h q rfl 84 (by decide)),
-      S.e11 ^^^ ilvE (lane32 bytes p h q rfl 88 (by decide)) (lane32 bytes p h q rfl 92 (by decide)), S.o11 ^^^ ilvO (lane32 bytes p h q rfl 88 (by decide)) (lane32 bytes p h q rfl 92 (by decide)),
-      S.e12 ^^^ ilvE (lane32 bytes p h q rfl 96 (by decide)) (lane32 bytes p h q rfl 100 (by decide)), S.o12 ^^^ ilvO (lane32 bytes p h q rfl 96 (by decide)) (lane32 bytes p h q rfl 100 (by decide)),
-      S.e13 ^^^ ilvE (lane32 bytes p h q rfl 104 (by decide)) (lane32 bytes p h q rfl 108 (by decide)), S.o13 ^^^ ilvO (lane32 bytes p h q rfl 104 (by decide)) (lane32 bytes p h q rfl 108 (by decide)),
-      S.e14 ^^^ ilvE (lane32 bytes p h q rfl 112 (by decide)) (lane32 bytes p h q rfl 116 (by decide)), S.o14 ^^^ ilvO (lane32 bytes p h q rfl 112 (by decide)) (lane32 bytes p h q rfl 116 (by decide)),
-      S.e15 ^^^ ilvE (lane32 bytes p h q rfl 120 (by decide)) (lane32 bytes p h q rfl 124 (by decide)), S.o15 ^^^ ilvO (lane32 bytes p h q rfl 120 (by decide)) (lane32 bytes p h q rfl 124 (by decide)),
-      S.e16 ^^^ ilvE (lane32 bytes p h q rfl 128 (by decide)) (lane32 bytes p h q rfl 132 (by decide)), S.o16 ^^^ ilvO (lane32 bytes p h q rfl 128 (by decide)) (lane32 bytes p h q rfl 132 (by decide)),
-      S.e17, S.o17, S.e18, S.o18, S.e19, S.o19, S.e20, S.o20, S.e21, S.o21, S.e22, S.o22, S.e23, S.o23, S.e24, S.o24⟩)
+      S.e0 ^^^ ilvE (lane32 bytes p h q rfl 0 (by decide))
+        (lane32 bytes p h q rfl 4 (by decide)),
+      S.o0 ^^^ ilvO (lane32 bytes p h q rfl 0 (by decide))
+        (lane32 bytes p h q rfl 4 (by decide)),
+      S.e1 ^^^ ilvE (lane32 bytes p h q rfl 8 (by decide))
+        (lane32 bytes p h q rfl 12 (by decide)),
+      S.o1 ^^^ ilvO (lane32 bytes p h q rfl 8 (by decide))
+        (lane32 bytes p h q rfl 12 (by decide)),
+      S.e2 ^^^ ilvE (lane32 bytes p h q rfl 16 (by decide))
+        (lane32 bytes p h q rfl 20 (by decide)),
+      S.o2 ^^^ ilvO (lane32 bytes p h q rfl 16 (by decide))
+        (lane32 bytes p h q rfl 20 (by decide)),
+      S.e3 ^^^ ilvE (lane32 bytes p h q rfl 24 (by decide))
+        (lane32 bytes p h q rfl 28 (by decide)),
+      S.o3 ^^^ ilvO (lane32 bytes p h q rfl 24 (by decide))
+        (lane32 bytes p h q rfl 28 (by decide)),
+      S.e4 ^^^ ilvE (lane32 bytes p h q rfl 32 (by decide))
+        (lane32 bytes p h q rfl 36 (by decide)),
+      S.o4 ^^^ ilvO (lane32 bytes p h q rfl 32 (by decide))
+        (lane32 bytes p h q rfl 36 (by decide)),
+      S.e5 ^^^ ilvE (lane32 bytes p h q rfl 40 (by decide))
+        (lane32 bytes p h q rfl 44 (by decide)),
+      S.o5 ^^^ ilvO (lane32 bytes p h q rfl 40 (by decide))
+        (lane32 bytes p h q rfl 44 (by decide)),
+      S.e6 ^^^ ilvE (lane32 bytes p h q rfl 48 (by decide))
+        (lane32 bytes p h q rfl 52 (by decide)),
+      S.o6 ^^^ ilvO (lane32 bytes p h q rfl 48 (by decide))
+        (lane32 bytes p h q rfl 52 (by decide)),
+      S.e7 ^^^ ilvE (lane32 bytes p h q rfl 56 (by decide))
+        (lane32 bytes p h q rfl 60 (by decide)),
+      S.o7 ^^^ ilvO (lane32 bytes p h q rfl 56 (by decide))
+        (lane32 bytes p h q rfl 60 (by decide)),
+      S.e8 ^^^ ilvE (lane32 bytes p h q rfl 64 (by decide))
+        (lane32 bytes p h q rfl 68 (by decide)),
+      S.o8 ^^^ ilvO (lane32 bytes p h q rfl 64 (by decide))
+        (lane32 bytes p h q rfl 68 (by decide)),
+      S.e9 ^^^ ilvE (lane32 bytes p h q rfl 72 (by decide))
+        (lane32 bytes p h q rfl 76 (by decide)),
+      S.o9 ^^^ ilvO (lane32 bytes p h q rfl 72 (by decide))
+        (lane32 bytes p h q rfl 76 (by decide)),
+      S.e10 ^^^ ilvE (lane32 bytes p h q rfl 80 (by decide))
+        (lane32 bytes p h q rfl 84 (by decide)),
+      S.o10 ^^^ ilvO (lane32 bytes p h q rfl 80 (by decide))
+        (lane32 bytes p h q rfl 84 (by decide)),
+      S.e11 ^^^ ilvE (lane32 bytes p h q rfl 88 (by decide))
+        (lane32 bytes p h q rfl 92 (by decide)),
+      S.o11 ^^^ ilvO (lane32 bytes p h q rfl 88 (by decide))
+        (lane32 bytes p h q rfl 92 (by decide)),
+      S.e12 ^^^ ilvE (lane32 bytes p h q rfl 96 (by decide))
+        (lane32 bytes p h q rfl 100 (by decide)),
+      S.o12 ^^^ ilvO (lane32 bytes p h q rfl 96 (by decide))
+        (lane32 bytes p h q rfl 100 (by decide)),
+      S.e13 ^^^ ilvE (lane32 bytes p h q rfl 104 (by decide))
+        (lane32 bytes p h q rfl 108 (by decide)),
+      S.o13 ^^^ ilvO (lane32 bytes p h q rfl 104 (by decide))
+        (lane32 bytes p h q rfl 108 (by decide)),
+      S.e14 ^^^ ilvE (lane32 bytes p h q rfl 112 (by decide))
+        (lane32 bytes p h q rfl 116 (by decide)),
+      S.o14 ^^^ ilvO (lane32 bytes p h q rfl 112 (by decide))
+        (lane32 bytes p h q rfl 116 (by decide)),
+      S.e15 ^^^ ilvE (lane32 bytes p h q rfl 120 (by decide))
+        (lane32 bytes p h q rfl 124 (by decide)),
+      S.o15 ^^^ ilvO (lane32 bytes p h q rfl 120 (by decide))
+        (lane32 bytes p h q rfl 124 (by decide)),
+      S.e16 ^^^ ilvE (lane32 bytes p h q rfl 128 (by decide))
+        (lane32 bytes p h q rfl 132 (by decide)),
+      S.o16 ^^^ ilvO (lane32 bytes p h q rfl 128 (by decide))
+        (lane32 bytes p h q rfl 132 (by decide)),
+      S.e17, S.o17, S.e18, S.o18, S.e19, S.o19, S.e20, S.o20, S.e21, S.o21, S.e22, S.o22,
+      S.e23, S.o23, S.e24, S.o24⟩)
 
 /-- The 32 digest bytes from interleaved lanes 0 to 3. -/
 def squeezeI (S : StateI) : Vector UInt8 DIGEST_LEN :=
@@ -690,9 +783,17 @@ def squeezeI (S : StateI) : Vector UInt8 DIGEST_LEN :=
   let b0 := dlvLo S.e1 S.o1; let b1 := dlvHi S.e1 S.o1
   let c0 := dlvLo S.e2 S.o2; let c1 := dlvHi S.e2 S.o2
   let d0 := dlvLo S.e3 S.o3; let d1 := dlvHi S.e3 S.o3
-  ⟨#[(a0 >>> 0).toUInt8, (a0 >>> 8).toUInt8, (a0 >>> 16).toUInt8, (a0 >>> 24).toUInt8, (a1 >>> 0).toUInt8, (a1 >>> 8).toUInt8, (a1 >>> 16).toUInt8, (a1 >>> 24).toUInt8, (b0 >>> 0).toUInt8, (b0 >>> 8).toUInt8, (b0 >>> 16).toUInt8, (b0 >>> 24).toUInt8, (b1 >>> 0).toUInt8, (b1 >>> 8).toUInt8, (b1 >>> 16).toUInt8, (b1 >>> 24).toUInt8, (c0 >>> 0).toUInt8, (c0 >>> 8).toUInt8, (c0 >>> 16).toUInt8, (c0 >>> 24).toUInt8, (c1 >>> 0).toUInt8, (c1 >>> 8).toUInt8, (c1 >>> 16).toUInt8, (c1 >>> 24).toUInt8, (d0 >>> 0).toUInt8, (d0 >>> 8).toUInt8, (d0 >>> 16).toUInt8, (d0 >>> 24).toUInt8, (d1 >>> 0).toUInt8, (d1 >>> 8).toUInt8, (d1 >>> 16).toUInt8, (d1 >>> 24).toUInt8], rfl⟩
+  ⟨#[(a0 >>> 0).toUInt8, (a0 >>> 8).toUInt8, (a0 >>> 16).toUInt8, (a0 >>> 24).toUInt8,
+     (a1 >>> 0).toUInt8, (a1 >>> 8).toUInt8, (a1 >>> 16).toUInt8, (a1 >>> 24).toUInt8,
+     (b0 >>> 0).toUInt8, (b0 >>> 8).toUInt8, (b0 >>> 16).toUInt8, (b0 >>> 24).toUInt8,
+     (b1 >>> 0).toUInt8, (b1 >>> 8).toUInt8, (b1 >>> 16).toUInt8, (b1 >>> 24).toUInt8,
+     (c0 >>> 0).toUInt8, (c0 >>> 8).toUInt8, (c0 >>> 16).toUInt8, (c0 >>> 24).toUInt8,
+     (c1 >>> 0).toUInt8, (c1 >>> 8).toUInt8, (c1 >>> 16).toUInt8, (c1 >>> 24).toUInt8,
+     (d0 >>> 0).toUInt8, (d0 >>> 8).toUInt8, (d0 >>> 16).toUInt8, (d0 >>> 24).toUInt8,
+     (d1 >>> 0).toUInt8, (d1 >>> 8).toUInt8, (d1 >>> 16).toUInt8, (d1 >>> 24).toUInt8], rfl⟩
 
-def zeroI : StateI := ⟨0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0⟩
+def zeroI : StateI := ⟨0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0⟩
 
 /-- Keccak-256 with the interleaved state kept across blocks. -/
 def keccak256I (msg : ByteArray) : Vector UInt8 DIGEST_LEN :=
