@@ -46,7 +46,7 @@ __attribute__((used, noreturn)) void fault_c(uint32_t *frame, uint32_t exc_retur
   BENCH.fault[6] = frame[6];                           /* stacked PC (may itself fault on a bad SP) */
   BENCH.fault[7] = frame[5];                           /* stacked LR */
 #ifdef QEMU
-  pq_sh_exit(0xFA);                                    /* a bkpt here would lock the QEMU core up, and QEMU would hang */
+  pq_sh_exit(0xFA);                                    /* a bkpt here locks the core up: QEMU aborts ("Lockup"), status 134 */
 #endif
   for (;;) __asm volatile("bkpt #1");
 }
