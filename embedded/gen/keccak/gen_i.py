@@ -1,4 +1,5 @@
-# Appends a bit-interleaved (2 x UInt32 per lane) Keccak to Fast.lean (called from gen.py output).
+# Appends a bit-interleaved (2 x UInt32 per lane) Keccak to Fast.lean, after gen.py has written it.
+# gen_proofI.py imports `rnd` from here. Run regen.py rather than this script alone.
 RC = [0x0000000000000001, 0x0000000000008082, 0x800000000000808A, 0x8000000080008000,
   0x000000000000808B, 0x0000000080000001, 0x8000000080008081, 0x8000000000008009,
   0x000000000000008A, 0x0000000000000088, 0x0000000080008009, 0x000000008000000A,
@@ -46,9 +47,7 @@ names = lambda p: " ".join(f"{p}{k}{h}" for k in range(25) for h in "eo")
 commas = lambda p: ", ".join(f"{p}{k}{h}" for k in range(25) for h in "eo")
 w("""/-! ## Bit-interleaved form: each lane as two `UInt32`, its even and its odd bits
 
-A 64-bit rotation by `2m` rotates both halves by `m`; by `2m + 1` it swaps them and rotates by `m + 1`
-and `m`. So every operation of a round is a 32-bit operation, which Thumb-2 does in one instruction,
-with the rotations folded into the operands of `eor`/`bic`. -/
+A 64-bit rotation by `2m` rotates both halves by `m`; by `2m + 1` it swaps them and rotates by `m + 1` and `m`. So every operation of a round is a 32-bit operation, which Thumb-2 does in one instruction, with the rotations folded into the operands of `eor`/`bic`. -/
 
 /-- The state in bit-interleaved form: field `kE` holds the even bits of lane `k`, `kO` the odd bits. -/
 structure StateI where
@@ -141,8 +140,9 @@ def keccak256I (msg : ByteArray) : Vector UInt8 DIGEST_LEN :=
   squeezeI (absorbI padded (padded.size / 136) 0
     (by have := Nat.mul_div_le padded.size 136; omega) zeroI)
 """)
-import sys
-src = open(sys.argv[1]).read()
-end = "end EthLib.Cryptography.Hash.Keccak.Fast"
-src = src.replace(end, "\n".join(L) + "\n" + end)
-open(sys.argv[1], "w").write(src)
+if __name__ == "__main__":
+    import sys
+    src = open(sys.argv[1]).read()
+    end = "end EthLib.Cryptography.Hash.Keccak.Fast"
+    src = src.replace(end, "\n".join(L) + "\n" + end)
+    open(sys.argv[1], "w").write(src)
