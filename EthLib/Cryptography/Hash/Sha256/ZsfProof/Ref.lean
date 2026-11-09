@@ -6,7 +6,17 @@ public import EthLib.Cryptography.Hash.Sha256.Zsf
 /-!
 # Reference definitions for the ZSf proof
 
-Packaging only: every definition here is either a renaming of a piece of `EthLib.Cryptography.Hash.Sha256.Zsf.zloop` (its arguments grouped into EthLib's `State` and `Window`) or a fast-side window (the words ZSf loads into `w0..w15`). Nothing here is used by compiled code. The lemmas at the end are proved.
+Packaging only: each definition here is a renaming or a fast-side window.
+
+A renaming names a piece of `EthLib.Cryptography.Hash.Sha256.Zsf.zloop`.
+
+Its arguments are grouped into EthLib's `State` and `Window`.
+
+A fast-side window holds the words that ZSf loads into `w0..w15`.
+
+Nothing here is used by compiled code.
+
+The lemmas at the end are proved.
 -/
 
 @[expose] public section
@@ -33,7 +43,10 @@ def zloopS (fuel : Nat) (m : ByteArray) (out : ByteArray) (hout : out.size = 32)
   zloop fuel m out hout ph s ho t H.a H.b H.c H.d H.e H.f H.g H.h S.a S.b S.c S.d S.e S.f S.g S.h
     W.w0 W.w1 W.w2 W.w3 W.w4 W.w5 W.w6 W.w7 W.w8 W.w9 W.w10 W.w11 W.w12 W.w13 W.w14 W.w15
 
-/-- The eight `put32` writes of `zloop`'s `.done` branch, applied to the words of `S` (the same expression, with the same proof terms, as in `EthLib.Cryptography.Hash.Sha256.Zsf.zloop`). -/
+/-- The eight `put32` writes of `zloop`'s `.done` branch, applied to the words of `S`.
+
+It is the expression of `EthLib.Cryptography.Hash.Sha256.Zsf.zloop`, with the same proof terms.
+-/
 def digestInto (out : ByteArray) (hout : out.size = 32) (S : State) : ByteArray :=
   put32 (put32 (put32 (put32 (put32 (put32 (put32 (put32 out
     0 S.a (by omega)) 4 S.b (by simp [size_put32]; omega))

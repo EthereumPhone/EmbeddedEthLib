@@ -2,7 +2,9 @@ module
 
 public import EthLib.Cryptography.Hash.Sha256.ZsfProof.Pad
 
-/-! Words: the full-block loads of `zloop` (`wordU`, `wordAtN`) are `wordAt`, and a full message block of `m` is the same block of `pad m`. -/
+/-! Words: the full-block loads of `zloop` (`wordU`, `wordAtN`) are `wordAt`.
+
+A full message block of `m` is the same block of `pad m`. -/
 
 public section
 

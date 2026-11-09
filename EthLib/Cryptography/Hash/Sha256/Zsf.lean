@@ -3,9 +3,25 @@ module
 /-!
 # SHA-256, zero-allocation form (ZSf)
 
-The same function as `EthLib.Cryptography.Hash.Sha256.hash`, written for 32-bit targets (Cortex-M33): every working word is an unboxed `UInt32` parameter of one tail-recursive loop `zloop`, the message is read in place through `@&` borrows, and the digest is written into a caller-owned 32-byte buffer (`hashInto`), so a call allocates nothing when that buffer is exclusive and at most the 32-byte result otherwise.
+The same function as `EthLib.Cryptography.Hash.Sha256.hash`, written for 32-bit targets (M33).
 
-This module does not import the specification (`Sha256/Spec.lean`): the initial hash value and the round constants are literals here, so no specification closed terms are built at module initialisation. `Sha256/ZsfProof/Main.lean` proves `hashInto m out = Sha256.hash m` for every `m` and `out` and installs the substitutions `hash = hashZ`, `hash32 = hash32Z` and `sha256 = hashZ` with `@[csimp]`.
+Every working word is an unboxed `UInt32` parameter of one tail-recursive loop `zloop`.
+
+The message is read in place through `@&` borrows.
+
+The digest is written into a caller-owned 32-byte buffer (`hashInto`).
+
+So a call allocates nothing when that buffer is exclusive, and at most the 32-byte result otherwise.
+
+This module does not import the specification (`Sha256/Spec.lean`).
+
+The initial hash value and the round constants are literals here.
+
+So no specification closed terms are built at module initialisation.
+
+`Sha256/ZsfProof/Main.lean` proves `hashInto m out = Sha256.hash m` for every `m` and `out`.
+
+It installs `hash = hashZ`, `hash32 = hash32Z` and `sha256 = hashZ` with `@[csimp]`.
 -/
 
 @[expose] public section
@@ -142,7 +158,11 @@ theorem size_put32 (b : ByteArray) (o : Nat) (w : UInt32) (h : o + 4 ≤ b.size)
 @[inline] def mb (m : @& ByteArray) (start i : Nat) (h : start + i < m.size) : UInt32 :=
   (m[start + i]'h).toUInt32
 
--- (above doc) The word holding the 0x80 byte, out of line; the caller folds `p = start + 4j` and `k = r - 4j < 4`, so the function does no multiply and reads at most m[p], m[p+1], m[p+2].
+-- (above doc) The word holding the 0x80 byte, out of line.
+--
+-- The caller folds `p = start + 4j` and `k = r - 4j < 4`.
+--
+-- So the function does no multiply and reads at most m[p], m[p+1], m[p+2].
 @[noinline] def partialWord (m : @& ByteArray) (p k : Nat) (hp : p + k = m.size) (hk : k < 4) :
     UInt32 :=
   if h1 : k = 0 then 0x80000000
@@ -153,7 +173,11 @@ theorem size_put32 (b : ByteArray) (o : Nat) (w : UInt32) (h : o + 4 ≤ b.size)
     (m[p]'(by omega)).toUInt32 <<< 24 ||| (m[p + 1]'(by omega)).toUInt32 <<< 16 |||
       (m[p + 2]'(by omega)).toUInt32 <<< 8 ||| 0x80
 
-/-- Word `j` of the padded tail: whole message words and zero words inline, the one word with the `0x80` byte through `partialWord`. Same value as the 6-case `tailWord` of A1. -/
+/-- Word `j` of the padded tail.
+
+Whole message words and zero words are inline, the one word with the `0x80` byte is `partialWord`.
+
+Same value as the 6-case `tailWord` of A1. -/
 @[inline] def tailWord (m : @& ByteArray) (start r j : Nat) (hr : start + r = m.size) : UInt32 :=
   if h : 4 * j + 4 ≤ r then wordAt m start j (by omega)
   else if h0 : r < 4 * j then 0
@@ -182,14 +206,21 @@ theorem add_toNat (o k : USize) (h : o.toNat + k.toNat < 4294967296) :
 
 /-! ## Zero allocations: the whole hash is one tail-recursive loop (spec-free, compact tail) -/
 
-/-- What follows the block in flight: more message, one last zero-and-length block, or the digest. -/
+/-- What follows the block in flight.
+
+It is more message, one last zero-and-length block, or the digest. -/
 inductive Ph | body | last | done
 
 set_option maxRecDepth 8192
 
 
-/-- `t < 64`: sixteen more rounds. `t ≥ 64`: feed-forward, then the next block or the digest.
-    The offset `s` is a `Nat`; full blocks of a message shorter than 2^30 bytes are read through `USize` (`wordU`), longer ones through the out-of-line `wordAtN` (same loop, no spec fallback). -/
+/-- `t < 64`: sixteen more rounds; `t ≥ 64`: feed-forward, then the next block or the digest.
+
+The offset `s` is a `Nat`.
+
+Full blocks of a message shorter than 2^30 bytes are read through `USize` (`wordU`).
+
+Longer ones go through the out-of-line `wordAtN`, in the same loop, with no spec fallback. -/
 def zloop (fuel : Nat) (m : @& ByteArray) (out : ByteArray) (hout : out.size = 32)
     (ph : Ph) (s : Nat) (ho : s ≤ m.size) (t : UInt32)
     (H0 H1 H2 H3 H4 H5 H6 H7 : UInt32) (a b c d e f g h : UInt32)
@@ -379,7 +410,10 @@ def zloop (fuel : Nat) (m : @& ByteArray) (out : ByteArray) (hout : out.size = 3
             w0 w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12 w13 (tailWord m s r 14 hr) (tailWord m s r 15
                 hr)
 
-/-- SHA-256 of `m`, written into `out` (in place when `out` is exclusive and 32 bytes; otherwise one fresh 32-byte buffer). -/
+/-- SHA-256 of `m`, written into `out`.
+
+It writes in place when `out` is exclusive and 32 bytes, and otherwise into a fresh 32-byte buffer.
+-/
 def hashInto (m : @& ByteArray) (out : ByteArray) : ByteArray :=
   let out := if out.size = 32 then out else zeros32
   if hout : out.size = 32 then

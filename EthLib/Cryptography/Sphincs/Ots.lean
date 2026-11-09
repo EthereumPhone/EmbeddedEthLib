@@ -2,7 +2,11 @@ module
 
 public import EthLib.Cryptography.Sphincs.Encoding
 public import EthLib.Cryptography.Wots
--- The proved fast tweakable-hash wrapper: its `@[csimp]` lemmas rewrite `th`, `prf`, `trunc` and the address builders in this module and in every module compiled after it.
+-- The proved fast tweakable-hash wrapper.
+--
+-- Its `@[csimp]` lemmas rewrite `th`, `prf`, `trunc` and the address builders.
+--
+-- They apply in this module and in every module compiled after it.
 public import EthLib.Cryptography.Sphincs.TweakableHash.Fast
 
 /-!
