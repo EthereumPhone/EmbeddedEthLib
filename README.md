@@ -11,7 +11,8 @@ What is different:
 - **Cortex-M33 tooling** in [`embedded/`](embedded/): a freestanding runtime, build scripts for QEMU `mps2-an505` and for an SRAM runner on the STM32U585, the benchmarks, an instruction counter, and a host test against `tests/cryptography`.
 - **The declaration check lists the substitutions.** Upstream's `lake exe check-decls` fails on any `@[csimp]`. This fork lists exactly its own in [`scripts/check_decls_baseline.txt`](scripts/check_decls_baseline.txt), and [SOUNDNESS.md](SOUNDNESS.md) section B5 says what that trusts.
 
-The Lean package is still called `EthLib` and every module keeps its name, so the fork is a drop-in replacement.
+The Lean package is still called `EthLib` and every module keeps its name, so Lean code that imports EthLib builds against the fork unchanged.
+The Python bindings were not tested against the fork (see "Verification of this fork" in [EMBEDDED.md](EMBEDDED.md)).
 [EMBEDDED.md](EMBEDDED.md) lists every fast path with its theorems, the measured results and their caveats.
 
 The rest of this file is upstream's README.

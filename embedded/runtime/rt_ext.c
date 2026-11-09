@@ -19,7 +19,8 @@ static uint64_t nat64(b_lean_obj_arg a) {
   if (lean_ptr_tag(a) != LeanMPZ) pq_fatal(0xF1);
   return ((pq_bignat *)a)->v;
 }
-lean_object *lean_nat_big_succ(lean_object *a) { uint64_t x = nat64(a); if (x == UINT64_MAX) pq_fatal(0xF0); lean_object *r = mk_nat64(x + 1); lean_dec(a); return r; }
+/* Every big-Nat argument below is borrowed (lean.h passes b_lean_obj_arg straight through), so none is dec'd. */
+lean_object *lean_nat_big_succ(lean_object *a) { uint64_t x = nat64(a); if (x == UINT64_MAX) pq_fatal(0xF0); return mk_nat64(x + 1); }
 lean_object *lean_nat_big_add(lean_object *a, lean_object *b) { uint64_t x = nat64(a), y = nat64(b); if (x + y < x) pq_fatal(0xF0); return mk_nat64(x + y); }
 lean_object *lean_nat_big_sub(lean_object *a, lean_object *b) { uint64_t x = nat64(a), y = nat64(b); return mk_nat64(x < y ? 0 : x - y); }
 lean_object *lean_nat_big_mul(lean_object *a, lean_object *b) { uint64_t x = nat64(a), y = nat64(b); if (y && x > UINT64_MAX / y) pq_fatal(0xF0); return mk_nat64(x * y); }

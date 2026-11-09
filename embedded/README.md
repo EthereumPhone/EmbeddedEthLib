@@ -3,6 +3,7 @@
 This directory reproduces the Cortex-M33 measurements in [`../EMBEDDED.md`](../EMBEDDED.md).
 It cross-compiles the C that `lake build` writes for this repository (`.lake/build/ir`), links it with a small freestanding Lean runtime, and runs it on QEMU's `mps2-an505` (a Cortex-M33) or from the secure SRAM of an STM32U585.
 Nothing here is part of the Lean library, and nothing here is proved.
+The benchmark entry points declare `@[extern]` I/O hooks (`pq_mark`, `pq_mode`, `pq_load`, `pq_report`, `pq_report_bytes`) that the C harness implements; they live only in `sphincs/SphincsBench.lean` and `sha256/ShaBench.lean.in`, outside the library and outside every proved path.
 
 | path | what |
 |---|---|
