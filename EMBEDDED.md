@@ -276,7 +276,7 @@ That agrees with the older table below.
 The single 3-byte hash of the zero-allocation form, with its `pq_mark` and its allocation, takes 1.02 times as long.
 The older table below gives 22,477.7 cycles for the specification.
 That figure came from a different, standalone harness and is the average of ten later hashes.
-The first hash of this harness also builds the specification's `K.toList` once (6,348 instructions on QEMU, see the SHA-256 section), which accounts for most of the difference: 32,575 − 22,477.7 ≈ 10,100 cycles, about 1.6 cycles per instruction.
+The first hash of this harness also builds the specification's `K.toList` once (6,348 instructions on QEMU, see the SHA-256 section), which is consistent with the difference: 32,575 − 22,477.7 ≈ 10,100 cycles, about 1.6 cycles per instruction.
 
 `Sha256.Zsf.hashInto` with one reused, exclusive buffer (`embedded/sha256/ShaInto.lean`), cycles per hash at 160 MHz, measured the same way as the C reference:
 
@@ -287,6 +287,7 @@ The first hash of this harness also builds the specification's `K.toList` once (
 | 1,072 bytes | 59,010.1 | |
 
 These are about 1.20 to 1.22 cycles per instruction of the QEMU counts in the SHA-256 section.
+This table ran the code of commit `4d4fce1a` with `embedded/sha256/ShaInto.lean` before it was committed (its code is unchanged since; only its comment changed), and was not re-measured.
 
 #### Older runs
 
@@ -355,9 +356,9 @@ The fork also changes `scripts/CheckDecls.lean` to compare baseline entries as t
 
 At the head of this fork:
 
-- `lake build --wfail EthLib Exports` (1,558 jobs) and `lake build --wfail` (6,802 jobs, all of EthLib's proofs included) build with no warning, with the upstream `lakefile.lean` and its pinned dependencies. The fork changes no definition, so no proof needed a change.
+- `lake build --wfail EthLib Exports` (1,558 jobs) and `lake build --wfail` (about 6,800 jobs, all of EthLib's proofs included) build with no warning, with the upstream `lakefile.lean` and its pinned dependencies. The fork changes no definition, so no proof needed a change.
 - `lake exe check-decls` checks 82,639 declarations: 27 findings, all listed in the baseline, none new, none stale. `scripts/test_check_decls.sh` passes.
-- `lake env leanchecker` replays every new or changed module (28 modules, at most 10 s each), and rejects upstream's `scripts/ReplayFixture.lean`, a theorem the kernel never checked. Every installed `@[csimp]` theorem, `keyGen_eq_keyGenFast` and `keccak256U_eq` use only `propext`, `Classical.choice` and `Quot.sound`.
+- `lake env leanchecker` replays every new or changed module (28 modules, at most about 12 s each), and rejects upstream's `scripts/ReplayFixture.lean`, a theorem the kernel never checked. Every installed `@[csimp]` theorem, `keyGen_eq_keyGenFast` and `keccak256U_eq` use only `propext`, `Classical.choice` and `Quot.sound`.
 - `embedded/hosttest` passes 685 vectors with 1,340 checks: every SHA-256 vector through six paths, every Keccak-256, Keccak-512 and Keccak-f[1600] vector, and every leanSPHINCS key generation, signing and verification vector of `tests/cryptography`.
 - Upstream's Python suites pass against the fork, whose C exports call the fast forms (`Exports/Sha256` calls `Zsf.hashZ`, `Exports/Keccak` calls `keccak256IG` and `keccakF2`, `Exports/Sphincs` calls `signFast`): `uv sync --frozen --extra test`, then `pytest -n auto --dist worksteal` passes 59,618 tests and skips 601 (515 of them need the release archives), with `tests/cryptography` unchanged. Python 3.12 and 3.11 gave the same counts.
 - The `slow` suite of `vectors-slow.yml` (`ETHLIB_SLOW_VECTORS=1 pytest -n auto -m "not archive"`, run with `--dist worksteal`) passes 59,683 tests and regenerates every vector unchanged, the leanSPHINCS key generation and signing vectors among them. The consensus parity catalogue of `ci.yml`, with its two archives fetched, passes.
