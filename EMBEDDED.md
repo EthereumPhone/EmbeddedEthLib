@@ -209,6 +209,7 @@ Code running from flash, behind the instruction cache and flash wait states, wil
 #### This fork's code
 
 The first three tables ran this fork's code at commit `4d4fce1a`, at 160 MHz.
+They were re-run from a fresh clone at commit `3cfe990a` (later commits change only documentation and the host test): every known answer passed again; the verify and SHA-256 segments came within 22 cycles of the figures below, signing within 1,938 cycles of 15.49 G and key generation within 482 of 8.46 G, at most 0.02 % in every case (the C reference); and the flash and option bytes read the same before and after.
 The images were built from this repository as [`embedded/README.md`](embedded/README.md) shows: `embedded/silicon/build.sh` with `-DPQ_MODE=0`, `1` or `2`, `-DARENA_BYTES=393216` and `-DCLK160` for leanSPHINCS, and `embedded/sha256/build.sh fast` or `spec` with `BUILDER=embedded/silicon/build.sh` and `-DCLK160` for SHA-256.
 The compiler flags are `-O2 -DNDEBUG`, as for QEMU.
 The generated C of the benchmark calls `signFast` for `sign`, `Keccak.Fast.keccak256IG` for `keccak256` and `Zsf.hashZ` for `Sha256.hash`, and the linked `decodeSignature` calls `readBytesP`.
@@ -287,7 +288,7 @@ The first hash of this harness also builds the specification's `K.toList` once (
 | 1,072 bytes | 59,010.1 | |
 
 These are about 1.20 to 1.22 cycles per instruction of the QEMU counts in the SHA-256 section.
-This table ran the code of commit `4d4fce1a` with `embedded/sha256/ShaInto.lean` before it was committed (its code is unchanged since; only its comment changed), and was not re-measured.
+This table first ran the code of commit `4d4fce1a` with `embedded/sha256/ShaInto.lean` before it was committed; re-run with the committed bench at `3cfe990a`, it gave 3,688.2, 7,078.3 and 59,010.2 cycles per hash, and the C reference 4,020.5.
 
 #### Older runs
 
@@ -366,7 +367,7 @@ At the head of this fork:
 - Upstream's layout gate reports no finding on the whole tree (`scripts/check_lean_layout.py --all --rule wrap`, which CI runs on every push), and `scripts/check_python_comments.py --all` none either. Against upstream (`--base 0b028a98`) the only findings are five in `Hash/Keccak/Spec.lean`: that file is upstream's `Keccak.lean` byte for byte, which the check counts as new because the module moved. A pull request into this fork is checked against the fork's own base, where the file is not new.
 - `python3 embedded/gen/keccak/regen.py --check` passes: the generators write the committed Keccak modules byte for byte.
 - On QEMU, the verify benchmark exits with status 0, prints the expected known answers, and its traced counts equal the tables above.
-- On a B-U585I-IOT02A, from SRAM at 160 MHz, the leanSPHINCS and SHA-256 board images built from this repository at commit `4d4fce1a` passed every known answer (see "This fork's code" under "Cycles on the STM32U585"). The board was not re-run at the head. At the head, every QEMU figure of the leanSPHINCS and SHA-256 tables above reproduces from a fresh clone (exact counts, and the published four significant figures for signing and key generation), and the board images build with every loadable segment inside the SRAM range.
+- On a B-U585I-IOT02A, from SRAM at 160 MHz, the leanSPHINCS and SHA-256 board images built from a fresh clone of this repository pass every known answer, and their cycles reproduce the figures of "This fork's code" under "Cycles on the STM32U585" to within 0.02 %. Every QEMU figure of the leanSPHINCS and SHA-256 tables above reproduces from the same clone (exact counts, and the published four significant figures for signing and key generation).
 
 This fork's workflows run CI on `main`, and `publish.yml` runs only in `ethereum/EthLib`, so the fork never publishes to PyPI.
 The weekly schedules of `replay.yml` and `vectors-slow.yml` are kept.
