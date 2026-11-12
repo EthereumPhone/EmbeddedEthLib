@@ -2,6 +2,9 @@ module
 
 public import EthLib.Consensus.Proofs.ForkChoice.Ghost
 public import EthLib.Consensus.Proofs.ForkChoice.Handlers
+public import EthLib.Consensus.Proofs.ForkChoice.PayloadGhost
+public import EthLib.Consensus.Proofs.Transition.BlockRoots
+public import EthLib.Consensus.Proofs.Transition.PayloadInputs
 public import EthLib.Consensus.Proofs.Transition.Slot
 
 /-!
@@ -32,6 +35,16 @@ So a block at that root would hash to the parent root of the anchor.
 The head of such a store is then the LMD-GHOST head of its filtered tree.
 
 That holds before Gloas, with the proposer boost as one more vote for the boosted block.
+
+From Gloas the head is that of LMD-GHOST over payload nodes, with the boost too.
+
+There no viable block may sit at the slot before the current one.
+
+All the states of a reachable store have one genesis time.
+
+From Gloas each state has the block hash of the bid of its block.
+
+Otherwise its latest block hash is the block hash of its latest bid.
 -/
 
 @[expose] public section
@@ -182,9 +195,33 @@ theorem onBlock_same_or_insert {config : Config} {checks : SignatureChecks}
       exact .inr ⟨blockRoot, rfl, Std.TreeMap.getElem?_eq_none_of_contains_eq_false
         (Bool.eq_false_iff.mpr known), blocks, rest⟩
 
+/-- A block keeps every block of the store. -/
+theorem onBlock_blocks_of_found {config : Config} {checks : SignatureChecks}
+    {sources : BlockSources preset fork} {signed : SignedBeaconBlock preset fork} {root : Root}
+    {block : BeaconBlock preset fork}
+    (added : store.onBlock config checks sources signed = .ok after)
+    (found : store.blocks[root]? = some block) :
+    after.blocks[root]? = some block := by
+  rcases onBlock_same_or_insert added with same | ⟨blockRoot, -, fresh, blocks, -⟩
+  · rw [same]
+    exact found
+  · rw [blocks, getElem?_insert_root]
+    split
+    · rename_i same
+      subst same
+      rw [fresh] at found
+      cases found
+    · exact found
+
 /-- A store that the handlers build from an anchor block and the state after it.
 
-The handlers are the tick, the block, the attestation and the attester slashing. -/
+The handlers are the tick, the block, the attestation and the attester slashing.
+
+From Gloas they also take a vote of the payload committee and a signed envelope.
+
+From Heze they also take an inclusion list.
+
+A store with a forward clock has the same cases, with a tick that never sets the time back. -/
 inductive Reachable (config : Config) (anchorState : BeaconState preset fork)
     (anchorBlock : BeaconBlock preset fork) : Store preset fork → Prop where
   /-- The store built from the anchor. -/
@@ -241,14 +278,10 @@ theorem Reachable.onBlockWithVotes {checks : SignatureChecks} {sources : BlockSo
     {signed : SignedBeaconBlock preset fork}
     (reachable : Reachable config anchorState anchorBlock store)
     (added : store.onBlockWithVotes config checks sources signed = .ok after) :
-    Reachable config anchorState anchorBlock after := by
-  unfold Store.onBlockWithVotes at added
-  simp only [bind_ok_iff, ← Array.foldlM_toList] at added
-  obtain ⟨blocked, block, voted, attested, slashed⟩ := added
-  have votes := foldlM_ok_invariant (Reachable config anchorState anchorBlock)
-    (fun _ _ _ reached step => reached.attestation step) (reachable.block block) attested
-  exact foldlM_ok_invariant (Reachable config anchorState anchorBlock)
-    (fun _ _ _ reached step => reached.attesterSlashing step) votes slashed
+    Reachable config anchorState anchorBlock after :=
+  onBlockWithVotes_preserves (fun reached step => reached.block step)
+    (fun _ reached step => reached.attestation step)
+    (fun _ reached step => reached.attesterSlashing step) reachable added
 
 /-- Each known block of a reachable store has its own root as its key. -/
 theorem Reachable.root (reachable : Reachable config anchorState anchorBlock store)
@@ -279,6 +312,73 @@ theorem Reachable.root (reachable : Reachable config anchorState anchorBlock sto
       rw [← found, ← same, hashed]
     · simp only [same, ↓reduceIte] at found
       exact holds found
+
+/-- A reachable store keeps a state only for a known block. -/
+theorem Reachable.known_of_blockState
+    (reachable : Reachable config anchorState anchorBlock store) {root : Root}
+    {state : BeaconState preset fork} (found : store.blockStates[root]? = some state) :
+    ∃ block, store.blocks[root]? = some block := by
+  induction reachable generalizing root state with
+  | anchor made =>
+    obtain ⟨anchorRoot, -, blocks, states⟩ := getForkchoiceStore_maps made
+    rw [states, getElem?_insert_root] at found
+    rw [blocks, getElem?_insert_root]
+    by_cases same : anchorRoot = root
+    · simp only [same, ↓reduceIte]
+      exact ⟨_, rfl⟩
+    · simp [same] at found
+  | tick _ ticked ih =>
+    obtain ⟨-, -, blocks, states⟩ := onTick_frame ticked
+    rw [states] at found
+    rw [blocks]
+    exact ih found
+  | attestation _ attested ih =>
+    obtain ⟨-, blocks, states⟩ := onAttestation_frame attested
+    rw [states] at found
+    rw [blocks]
+    exact ih found
+  | attesterSlashing _ slashed ih =>
+    obtain ⟨-, blocks, states⟩ := onAttesterSlashing_frame slashed
+    rw [states] at found
+    rw [blocks]
+    exact ih found
+  | payloadAttestation _ voted ih =>
+    obtain ⟨-, blocks, states⟩ := (onPayloadAttestationMessage_onlyPtcVotes voted).frame
+    rw [states] at found
+    rw [blocks]
+    exact ih found
+  | envelope _ accepted ih =>
+    obtain ⟨-, blocks, states⟩ := onExecutionPayloadEnvelope_frame accepted
+    rw [states] at found
+    rw [blocks]
+    exact ih found
+  | inclusionList _ accepted ih =>
+    obtain ⟨-, blocks, states⟩ := onInclusionList_frame accepted
+    rw [states] at found
+    rw [blocks]
+    exact ih found
+  | block _ added ih =>
+    rcases onBlock_same_or_insert added with
+      same | ⟨blockRoot, -, -, blocks, -, state', -, -, states⟩
+    · subst same
+      exact ih found
+    rw [states, getElem?_insert_root] at found
+    rw [blocks, getElem?_insert_root]
+    by_cases same : blockRoot = root
+    · simp only [same, ↓reduceIte]
+      exact ⟨_, rfl⟩
+    · simp only [same, ↓reduceIte] at found ⊢
+      exact ih found
+
+/-- A reachable store keeps no state at a root without a known block. -/
+theorem Reachable.blockState_eq_none
+    (reachable : Reachable config anchorState anchorBlock store) {root : Root}
+    (unknown : store.blocks[root]? = none) : store.blockStates[root]? = none := by
+  by_contra kept
+  obtain ⟨state, found⟩ := Option.ne_none_iff_exists'.mp kept
+  obtain ⟨block, known⟩ := reachable.known_of_blockState found
+  rw [unknown] at known
+  cases known
 
 /-- A reachable store is linked under the parent root of the anchor, unless it knows that root.
 
@@ -335,6 +435,145 @@ theorem Reachable.parentsBelow (reachable : Reachable config anchorState anchorB
   · exact linked.parentsBelow
   · rw [Std.TreeMap.contains_eq_isSome_getElem?, unknown] at known
     cases known
+
+/-- All the states that the store keeps have one genesis time. -/
+def OneGenesisTime (store : Store preset fork) : Prop :=
+  ∀ {root other : Root} {state otherState : BeaconState preset fork},
+    store.blockStates[root]? = some state → store.blockStates[other]? = some otherState →
+      state.genesisTime = otherState.genesisTime
+
+/-- Each state that the store keeps has a block at its root.
+
+From Gloas the latest bid of the state has the block hash of the bid of that block.
+
+Otherwise the latest block hash of the state is the block hash of its latest bid. -/
+def StatesKeepBids (store : Store preset fork) : Prop :=
+  ∀ {root : Root} {state : BeaconState preset fork}, store.blockStates[root]? = some state →
+    ∃ block, store.blocks[root]? = some block ∧ ∀ gloas : .glamsterdam ≤ fork,
+      (state.latestExecutionPayloadBid gloas).blockHash =
+          (block.body.signedExecutionPayloadBid gloas).message.blockHash ∨
+        state.latestBlockHash gloas = (state.latestExecutionPayloadBid gloas).blockHash
+
+/-- A store with the same states keeps one genesis time. -/
+private theorem OneGenesisTime.of_states (one : store.OneGenesisTime)
+    (states : after.blockStates = store.blockStates) : after.OneGenesisTime :=
+  fun found otherFound => one (states ▸ found) (states ▸ otherFound)
+
+/-- A store with the same blocks and states keeps the bids of its states. -/
+private theorem StatesKeepBids.of_maps (bids : store.StatesKeepBids)
+    (blocks : after.blocks = store.blocks) (states : after.blockStates = store.blockStates) :
+    after.StatesKeepBids :=
+  fun found => blocks ▸ bids (states ▸ found)
+
+/-- All the states of a reachable store have one genesis time.
+
+The anchor store keeps one state, and the transition of a block keeps the genesis time. -/
+theorem Reachable.oneGenesisTime (reachable : Reachable config anchorState anchorBlock store) :
+    store.OneGenesisTime := by
+  induction reachable with
+  | @anchor st made =>
+    obtain ⟨anchorRoot, -, -, states⟩ := getForkchoiceStore_maps made
+    -- The only state is the anchor state.
+    have only : ∀ {r : Root} {s : BeaconState preset fork}, st.blockStates[r]? = some s →
+        s = anchorState := by
+      intro r s found
+      rw [states, getElem?_insert_root] at found
+      by_cases same : anchorRoot = r
+      · simp only [same, ↓reduceIte, Option.some.injEq] at found
+        exact found.symm
+      · simp [same] at found
+    intro _ _ _ _ found otherFound
+    rw [only found, only otherFound]
+  | tick _ ticked holds => exact holds.of_states (onTick_frame ticked).2.2.2
+  | attestation _ attested holds => exact holds.of_states (onAttestation_frame attested).2.2
+  | attesterSlashing _ slashed holds =>
+    exact holds.of_states (onAttesterSlashing_frame slashed).2.2
+  | payloadAttestation _ voted holds =>
+    exact holds.of_states (onPayloadAttestationMessage_onlyPtcVotes voted).frame.2.2
+  | envelope _ accepted holds =>
+    exact holds.of_states (onExecutionPayloadEnvelope_frame accepted).2.2
+  | inclusionList _ accepted holds => exact holds.of_states (onInclusionList_frame accepted).2.2
+  | @block before after checks sources signed _ added holds =>
+    rcases onBlock_same_or_insert added with
+      same | ⟨blockRoot, -, -, -, pre, state, parentState, transition, states⟩
+    · exact same ▸ holds
+    -- Each state after the block has the genesis time of the parent state.
+    have sameGenesis : ∀ {r : Root} {kept : BeaconState preset fork},
+        after.blockStates[r]? = some kept → kept.genesisTime = pre.genesisTime := by
+      intro r kept found
+      rw [states, getElem?_insert_root] at found
+      by_cases same : blockRoot = r
+      · simp only [same, ↓reduceIte, Option.some.injEq] at found
+        exact found ▸ stateTransition_genesisTime transition
+      · simp only [same, ↓reduceIte] at found
+        exact holds found parentState
+    intro _ _ _ _ found otherFound
+    exact (sameGenesis found).trans (sameGenesis otherFound).symm
+
+/-- Each state of a reachable store has a block at its root.
+
+From Gloas its latest bid has the block hash of the bid of that block.
+
+Otherwise its latest block hash is the block hash of its latest bid.
+
+The anchor state must meet the same condition with the anchor block.
+
+A state from the upgrade to Gloas meets the second case, with any anchor block.
+
+A genesis block with a default body meets the first case.
+
+That needs the bid of the genesis state to have a zero block hash.
+
+A block leaves its own bid as the latest bid of the state after it. -/
+theorem Reachable.statesKeepBids (reachable : Reachable config anchorState anchorBlock store)
+    (anchorBid : ∀ gloas : .glamsterdam ≤ fork,
+      (anchorState.latestExecutionPayloadBid gloas).blockHash =
+          (anchorBlock.body.signedExecutionPayloadBid gloas).message.blockHash ∨
+      anchorState.latestBlockHash gloas = (anchorState.latestExecutionPayloadBid gloas).blockHash) :
+    store.StatesKeepBids := by
+  induction reachable with
+  | anchor made =>
+    obtain ⟨anchorRoot, -, blocks, states⟩ := getForkchoiceStore_maps made
+    intro r s found
+    rw [states, getElem?_insert_root] at found
+    rw [blocks, getElem?_insert_root]
+    by_cases same : anchorRoot = r
+    · simp only [same, ↓reduceIte, Option.some.injEq] at found ⊢
+      exact ⟨anchorBlock, rfl, found ▸ anchorBid⟩
+    · simp [same] at found
+  | tick _ ticked holds =>
+    obtain ⟨-, -, blocks, states⟩ := onTick_frame ticked
+    exact holds.of_maps blocks states
+  | attestation _ attested holds =>
+    obtain ⟨-, blocks, states⟩ := onAttestation_frame attested
+    exact holds.of_maps blocks states
+  | attesterSlashing _ slashed holds =>
+    obtain ⟨-, blocks, states⟩ := onAttesterSlashing_frame slashed
+    exact holds.of_maps blocks states
+  | payloadAttestation _ voted holds =>
+    obtain ⟨-, blocks, states⟩ := (onPayloadAttestationMessage_onlyPtcVotes voted).frame
+    exact holds.of_maps blocks states
+  | envelope _ accepted holds =>
+    obtain ⟨-, blocks, states⟩ := onExecutionPayloadEnvelope_frame accepted
+    exact holds.of_maps blocks states
+  | inclusionList _ accepted holds =>
+    obtain ⟨-, blocks, states⟩ := onInclusionList_frame accepted
+    exact holds.of_maps blocks states
+  | @block before after checks sources signed _ added holds =>
+    rcases onBlock_same_or_insert added with
+      same | ⟨blockRoot, -, -, blocks, pre, state, -, transition, states⟩
+    · exact same ▸ holds
+    intro r kept found
+    rw [states, getElem?_insert_root] at found
+    rw [blocks, getElem?_insert_root]
+    by_cases same : blockRoot = r
+    · simp only [same, ↓reduceIte, Option.some.injEq] at found ⊢
+      obtain ⟨_, -, -, -, blockOk, -⟩ := stateTransition_ok transition
+      exact ⟨_, rfl, fun gloas =>
+        .inl (found ▸
+          congrArg (·.blockHash) (latestExecutionPayloadBid_processBlock gloas blockOk))⟩
+    · simp only [same, ↓reduceIte] at found ⊢
+      exact holds found
 
 /-- The facts that keep orphans low in a store that the handlers build.
 
@@ -496,6 +735,37 @@ theorem Reachable.getHead_eq_ghost_withBoost {state : BeaconState preset fork}
       ((view (reachable.parentsBelow anchorSlot unknown) nodes).withBoost store.boostedRoot)
       rootValue (some store.justifiedCheckpoint.root) = some head.root :=
   Store.getHead_eq_ghost_withBoost _ before justifiedState tree found
+
+/-- From Gloas, the head of a reachable store is the head of LMD-GHOST over nodes with the boost.
+
+That needs the anchor block at or before the slot of the anchor state.
+
+It also needs the parent root of the anchor to name no known block.
+
+No viable node may be a payload decision of the previous slot, and some node must be viable.
+
+So no viable block, the justified block included, may sit at the slot before the current one.
+
+The model starts at the pending node of the justified block, over the view of the viable nodes.
+
+The boost is one more vote, for the pending node of the boosted block.
+
+Its stake is the score of the boost, and the vote is absent when the boost does not apply. -/
+theorem Reachable.getHead_eq_ghost_withBoost_of_gloas {state : BeaconState preset fork}
+    {nodes : List ForkChoiceNode} {head : ForkChoiceNode}
+    (reachable : Reachable config anchorState anchorBlock store)
+    (anchorSlot : anchorBlock.slot ≤ anchorState.slot)
+    (unknown : store.blocks[anchorBlock.parentRoot]? = none) (gloas : .glamsterdam ≤ fork)
+    (noDecision : ∀ n ∈ nodes, store.isPreviousSlotPayloadDecision config n = .ok false)
+    (justifiedState : store.checkpointState store.justifiedCheckpoint = .ok state)
+    (tree : store.getFilteredNodeTree config = .ok nodes) (someViable : nodes ≠ [])
+    (found : store.getHead config = .ok head) :
+    ghost (voters state).insertNone
+      (boostStake (balanceAt state) (store.boostScoreOfGloas config gloas))
+      ((nodeView (reachable.parentsBelow anchorSlot unknown) nodes).withBoost
+        (store.boostedNode config gloas)) nodeOrder
+      (some store.justifiedCheckpoint.root, none) = head.toModel :=
+  Store.getHead_eq_ghost_withBoost_of_gloas _ gloas noDecision justifiedState tree someViable found
 
 end Store
 

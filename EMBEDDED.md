@@ -113,7 +113,8 @@ Every equality is generic over the monad and the hash, so it also holds in the r
 
 Unless a row says otherwise, the numbers are instructions executed on QEMU `mps2-an505`, a Cortex-M33, counted exactly from QEMU's execution trace (`embedded/tools/count_run.sh`) or, for signing and key generation, with QEMU's instruction counter (`-icount shift=0`, one tick per 50 instructions).
 The code is the generated C of this repository, compiled with `arm-none-eabi-gcc` 13.2, `-O2 -DNDEBUG`, and linked with the arena runtime of `embedded/runtime`.
-"Upstream" is the same benchmark built from upstream EthLib at `0b028a98`.
+"Upstream" is the same benchmark built from upstream EthLib at `0b028a98`, the commit the fork started from.
+That column was not re-measured after the merge of upstream up to `7d898f4d`.
 Each benchmark segment includes a few tens of instructions of harness (`mark`, `report`).
 Every QEMU run exits with status 0 after it completes and nonzero after a halt or a fault, and `count_run.sh` passes that status on.
 
@@ -355,7 +356,7 @@ The fork also changes `scripts/CheckDecls.lean` to compare baseline entries as t
 
 ## Verification of this fork
 
-At the head of this fork:
+At commit `128845c3`, before the first merge from upstream:
 
 - `lake build --wfail EthLib Exports` (1,558 jobs) and `lake build --wfail` (about 6,800 jobs, all of EthLib's proofs included) build with no warning, with the upstream `lakefile.lean` and its pinned dependencies. The fork changes no definition, so no proof needed a change.
 - `lake exe check-decls` checks 82,639 declarations: 27 findings, all listed in the baseline, none new, none stale. `scripts/test_check_decls.sh` passes.
@@ -378,3 +379,21 @@ Not run:
 - The archive suites of `vectors-slow.yml` (the execution, consensus, devnet and legacy parity runs, which upstream measures in hours, and the execution-spec-tests, consensus SSZ, ssz-generic and NIST CAVP archives), `tests/cryptography/check_vectors.py --upstream`, and `scripts/check_spec_releases.py`, which queries the GitHub API.
 - `scripts/replay.sh` over all of EthLib's modules: only the fork's 28 new or changed modules were replayed.
 - The memory check of a pull request's changed files, and the wheel builds of `publish.yml`.
+
+### After the merge of upstream up to `7d898f4d`
+
+On 2026-11-12 the fork merged upstream's 349 commits from `0b028a98` to `7d898f4d`.
+Upstream kept the toolchain (v4.35.0) and the pinned dependencies, and changed none of the Lean modules that the fork changes.
+The merge had one conflict: upstream deleted `.github/workflows/bench.yml`, which the fork had edited, and the merge keeps the deletion.
+A new step of `ci.yml` saved its cache on `master` only; it now saves on `main`, as the fork's other steps do.
+
+Re-run on the merged tree:
+
+- `lake build --wfail EthLib Exports Proofs` (7,168 jobs) builds with no warning.
+- `lake exe check-decls` checks 99,311 declarations: 27 findings, all listed in the baseline, none new, none stale. `scripts/test_check_decls.sh` passes.
+- `lake env leanchecker` rejects upstream's `scripts/ReplayFixture.lean` and replays the fork's 28 new or changed modules.
+- `embedded/hosttest` passes 685 vectors with 1,340 checks. Upstream changed none of the vectors it reads.
+- On QEMU, the verify benchmark exits with status 0 and prints the expected known answers, signing gives `R 10 1` and key generation `R 11 1`. Every count of this fork in the leanSPHINCS and SHA-256 tables above is unchanged, among them decode 3,460,788, verify 12,224,085, signing 11.50 G and key generation 6.284 G instructions.
+- The layout gate (`--all --rule wrap`), `scripts/check_python_comments.py --all`, `scripts/soundness_facts.py --check` with its unit tests, `scripts/check_layers.py` and `embedded/gen/keccak/regen.py --check` report no finding.
+
+Not re-run after the merge: upstream's Python suites and the `slow` suite, the other jobs of `ci.yml`, the upstream column of the tables, and the board.

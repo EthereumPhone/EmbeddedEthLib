@@ -1,0 +1,567 @@
+module
+
+public import EthLib.Engine.Jwt
+public import EthLib.Base.Proofs.Base64
+public import Mathlib.Tactic
+
+/-!
+# Engine JWT construction, refusal and acceptance
+
+A 32-byte secret always builds a token, since the reader reads back the builder's own JSON.
+
+That token authenticates with its secret and issued-at time.
+
+The clock check then accepts at every clock within 60 seconds, including both endpoints.
+
+A token whose tag does not match its parts is refused before any JSON is read.
+
+An authenticated token carries the HS256 tag of its header and claims under its secret.
+
+So it is the compact form of those parts with that tag, and no other tag part is accepted.
+-/
+
+@[expose] public section
+
+namespace EthLib.Engine.Jwt
+
+open EthLib.Base
+
+private theorem encodeSextet_ne_dot (n : Nat) : Base64.encodeSextet n ≠ '.' := by
+  by_cases h : n < 64
+  · exact (by decide : ∀ i : Fin 64, Base64.encodeSextet i ≠ '.') ⟨n, h⟩
+  · simp [Base64.encodeSextet, show ¬n < 26 by omega, show ¬n < 52 by omega,
+      show ¬n < 62 by omega, show n ≠ 62 by omega]
+
+private theorem dot_ne_encodeSextet (n : Nat) : '.' ≠ Base64.encodeSextet n :=
+  Ne.symm (encodeSextet_ne_dot n)
+
+private theorem dot_not_mem_encodeList :
+    (bytes : List UInt8) → '.' ∉ Base64.encodeList bytes
+  | b0 :: b1 :: b2 :: rest => by
+    simp [Base64.encodeList, dot_ne_encodeSextet, dot_not_mem_encodeList rest]
+  | [b0, b1] => by simp [Base64.encodeList, dot_ne_encodeSextet]
+  | [b0] => by simp [Base64.encodeList, dot_ne_encodeSextet]
+  | [] => by simp [Base64.encodeList]
+
+/-- A base64url part contains no compact-form separator. -/
+theorem dot_not_mem_encode (bytes : ByteArray) : '.' ∉ (Base64.encode bytes).toList := by
+  simpa [Base64.encode] using dot_not_mem_encodeList bytes.data.toList
+
+/-- Splitting a compact form recovers its parts when none contains a separator. -/
+theorem parts_compact (header claims mac : String)
+    (hh : '.' ∉ header.toList) (hc : '.' ∉ claims.toList) (hm : '.' ∉ mac.toList) :
+    parts (compact header claims mac) = some ⟨header, claims, mac⟩ := by
+  simp only [parts, compact, String.toList_append, show ".".toList = ['.'] by rfl,
+    List.append_assoc, List.cons_append, List.nil_append]
+  rw [List.splitOn_append_cons_self_of_not_mem hh,
+    List.splitOn_append_cons_self_of_not_mem hc, List.splitOn_eq_singleton hm]
+  simp
+
+private theorem objectFields_encode (text : String) :
+    objectFields (Base64.encode text.toUTF8) = Json.fields text := by
+  simp [objectFields, Base64.decode_encode, String.fromUTF8?, String.fromUTF8, text.isValidUTF8]
+
+/-- Characters a JSON string may hold without an escape. -/
+private def Plain (c : Char) : Prop := c ≠ '"' ∧ c ≠ '\\' ∧ 0x20 ≤ c.toNat
+
+private theorem string_plain (rest : List Char) :
+    ∀ (s acc : List Char) (fuel : Nat), (∀ c ∈ s, Plain c) → s.length < fuel →
+      Json.string fuel (s ++ '"' :: rest) acc = some (String.ofList (acc.reverse ++ s), rest)
+  | [], acc, fuel + 1, _, _ => by simp [Json.string]
+  | c :: s, acc, fuel + 1, h, hl => by
+    obtain ⟨h1, h2, h3⟩ := h c (by simp)
+    have ih := string_plain rest s (c :: acc) fuel (fun d hd => h d (by simp [hd]))
+      (by simp at hl; omega)
+    rw [List.cons_append, Json.string.eq_def]
+    split <;> simp_all
+
+private theorem digit_of_mem_toDigits {c : Char} {n : Nat} (h : c ∈ Nat.toDigits 10 n) :
+    Json.digit c = true := by
+  have := Nat.isDigit_of_mem_toDigits (by decide) (by decide) h
+  simp only [Char.isDigit, Json.digit, Bool.and_eq_true, decide_eq_true_eq] at this ⊢
+  exact this
+
+private theorem digitsValue_eq (l : List Char) (h : ∀ c ∈ l, Json.digit c = true) (init : Nat) :
+    l.foldl (fun acc c => 10 * acc + c.toNat - '0'.toNat) init = Nat.ofDigitChars 10 l init := by
+  induction l generalizing init with
+  | nil => simp
+  | cons c l ih =>
+    have hc := h c (by simp)
+    simp only [Json.digit, Bool.and_eq_true, decide_eq_true_eq] at hc
+    have : '0'.toNat ≤ c.toNat := hc.1
+    rw [List.foldl_cons, Nat.ofDigitChars_cons, Nat.add_sub_assoc this]
+    exact ih (fun d hd => h d (by simp [hd])) _
+
+private theorem head_toDigits_ne_zero (n : Nat) (hn : 0 < n) :
+    (Nat.toDigits 10 n).head? ≠ some '0' := by
+  induction n using Nat.strong_induction_on with
+  | _ n ih =>
+    rw [Nat.toDigits_eq_ite (by decide)]
+    split
+    · simp; omega
+    · rw [List.head?_append_of_ne_nil _ Nat.toDigits_ne_nil]
+      exact ih (n / 10) (by omega) (by omega)
+
+private theorem number_toDigits (n : Nat) (tail : List Char) :
+    Json.number (Nat.toDigits 10 n ++ '}' :: tail) = some (⟨n, 0⟩, '}' :: tail) := by
+  have hdig : ∀ c ∈ Nat.toDigits 10 n, Json.digit c = true := fun c h => digit_of_mem_toDigits h
+  have hspan : (Nat.toDigits 10 n ++ '}' :: tail).span Json.digit =
+      (Nat.toDigits 10 n, '}' :: tail) := by
+    rw [List.span_eq_takeWhile_dropWhile, List.takeWhile_append_of_pos hdig,
+      List.dropWhile_append_of_pos hdig]
+    simp [Json.digit]
+  obtain ⟨d, ds, hd⟩ : ∃ d ds, Nat.toDigits 10 n = d :: ds :=
+    List.exists_cons_of_ne_nil Nat.toDigits_ne_nil
+  have hminus : d ≠ '-' := by
+    have := hdig d (by simp [hd])
+    rintro rfl
+    simp [Json.digit] at this
+  have hlead : ((d :: ds).head? = some '0' && (d :: ds).length > 1) = false := by
+    rcases Nat.eq_zero_or_pos n with rfl | hn
+    · simp [Nat.toDigits_zero] at hd
+      simp [← hd.2]
+    · have := head_toDigits_ne_zero n hn
+      simp_all
+  have hval : Json.digitsValue (d :: ds ++ []) = n := by
+    rw [List.append_nil, ← hd, Json.digitsValue, digitsValue_eq _ hdig,
+      Nat.ofDigitChars_ten_toDigits]
+  rw [hd] at hspan
+  unfold Json.number
+  rw [hd, List.cons_append]
+  split
+  rename_i minus rest heq
+  have : (minus, rest) = (false, d :: (ds ++ '}' :: tail)) := by
+    rw [← heq]
+    split <;> simp_all
+  simp only [Prod.mk.injEq] at this
+  obtain ⟨rfl, rfl⟩ := this
+  simp only [List.cons_append] at hspan
+  simp only [hspan]
+  simp only [List.append_nil] at hval
+  simp only [List.head?_cons, Option.some.injEq, List.length_cons, Bool.and_eq_false_imp,
+    decide_eq_true_eq, decide_eq_false_iff_not, not_lt] at hlead
+  simpa [hval] using fun h => List.eq_nil_of_length_eq_zero (by have := hlead h; omega)
+
+private theorem value_string (fuel : Nat) (s rest : List Char) (hs : ∀ c ∈ s, Plain c) :
+    Json.value (fuel + 1) ('"' :: (s ++ '"' :: rest)) = some (.str (String.ofList s), rest) := by
+  rw [Json.value]
+  simp [Json.whitespace]
+  rw [string_plain rest s [] _ hs (by simp)]
+  simp
+
+private theorem value_number (fuel n : Nat) (tail : List Char) :
+    Json.value (fuel + 1) (Nat.toDigits 10 n ++ '}' :: tail) =
+      some (.num ⟨n, 0⟩, '}' :: tail) := by
+  obtain ⟨d, ds, hd⟩ : ∃ d ds, Nat.toDigits 10 n = d :: ds :=
+    List.exists_cons_of_ne_nil Nat.toDigits_ne_nil
+  have hdig := digit_of_mem_toDigits (c := d) (n := n) (by simp [hd])
+  have hnum := number_toDigits n tail
+  rw [hd] at hnum
+  simp only [Json.digit, Bool.and_eq_true, decide_eq_true_eq] at hdig
+  rw [Json.value, hd, List.cons_append, List.dropWhile_cons_of_neg (by
+    simp only [Json.whitespace, Bool.or_eq_true, decide_eq_true_eq]
+    rintro (((rfl | rfl) | rfl) | rfl) <;> revert hdig <;> decide)]
+  split <;> simp_all
+
+private theorem object_close (fuel : Nat) (key rest tail : List Char) (item : Json.Value)
+    (acc : List (String × Json.Value)) (empty : Bool) (hk : ∀ c ∈ key, Plain c)
+    (h : Json.value fuel rest = some (item, '}' :: tail)) :
+    Json.object (fuel + 1) ('"' :: (key ++ '"' :: ':' :: rest)) acc empty =
+      some ((String.ofList key, item) :: acc, tail) := by
+  rw [Json.object]
+  simp only [List.length_append, List.length_cons]
+  rw [string_plain _ key [] _ hk (by omega)]
+  simp [Json.whitespace, h]
+
+private theorem object_comma (fuel : Nat) (key rest tail : List Char) (item : Json.Value)
+    (acc : List (String × Json.Value)) (empty : Bool) (hk : ∀ c ∈ key, Plain c)
+    (h : Json.value fuel rest = some (item, ',' :: tail)) :
+    Json.object (fuel + 1) ('"' :: (key ++ '"' :: ':' :: rest)) acc empty =
+      Json.object fuel (tail.dropWhile Json.whitespace) ((String.ofList key, item) :: acc)
+        false := by
+  rw [Json.object]
+  simp only [List.length_append, List.length_cons]
+  rw [string_plain _ key [] _ hk (by omega)]
+  simp [Json.whitespace, h]
+
+/-- The builder's header names HS256 and no critical extension. -/
+theorem algorithm_headerPart : algorithm headerPart = .ok "HS256" := by
+  have hobj : Json.object 55 ['"', 'a', 'l', 'g', '"', ':', '"', 'H', 'S', '2', '5', '6', '"', ',',
+      '"', 't', 'y', 'p', '"', ':', '"', 'J', 'W', 'T', '"', '}'] [] true =
+      some ([(String.ofList ['t', 'y', 'p'], .str (String.ofList ['J', 'W', 'T'])),
+        (String.ofList ['a', 'l', 'g'], .str (String.ofList ['H', 'S', '2', '5', '6']))], []) :=
+    (object_comma 54 ['a', 'l', 'g'] _ _ _ _ _ (by simp [Plain])
+      (value_string 53 ['H', 'S', '2', '5', '6'] _ (by simp [Plain]))).trans
+      (object_close 53 ['t', 'y', 'p'] _ _ _ _ _ (by simp [Plain])
+        (value_string 52 ['J', 'W', 'T'] _ (by simp [Plain])))
+  rw [algorithm, headerPart, objectFields_encode]
+  simp only [Json.fields, String.reduceToList]
+  simp [Json.whitespace]
+  rw [hobj]
+  simp [List.lookup]
+  rfl
+
+/-- The builder's claims read back as its integral issued-at time. -/
+theorem issuedAt_claimsPart (time : Nat) :
+    issuedAt headerPart (claimsPart time) = .ok ⟨time, 0⟩ := by
+  have hobj (m : Nat) : Json.object (m + 2) ('"' :: 'i' :: 'a' :: 't' :: '"' :: ':' ::
+      (Nat.toDigits 10 time ++ ['}'])) [] true = some ([("iat", .num ⟨time, 0⟩)], []) := by
+    refine (object_close (m + 1) ['i', 'a', 't'] _ _ _ _ _ (by simp [Plain])
+      (value_number m time [])).trans ?_
+    simp
+  rw [issuedAt, algorithm_headerPart]
+  simp only [claimsPart, objectFields_encode, Json.fields, String.toList_append, Nat.toList_repr,
+    String.reduceToList]
+  simp [Json.whitespace]
+  rw [show ∀ k : Nat, 2 * (k + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1) + 1 = (2 * k + 15) + 2 from
+    fun k => by omega, hobj]
+  simp [List.lookup, bind, Except.bind]
+  rfl
+
+/-- A 32-byte secret always builds the signed compact form of the builder's two parts. -/
+theorem build_eq_ok {secret : ByteArray} (hs : secret.size = 32) (time : Nat) :
+    build secret time = .ok (compact headerPart (claimsPart time)
+      (signature secret headerPart (claimsPart time))) := by
+  simp [build, hs, issuedAt_claimsPart]
+  rfl
+
+/-- With a 32-byte secret, the compact form signed with it passes the tag check.
+
+This holds for parts with no separator.
+
+Authentication then gives what reading those parts gives: an issued-at time, or its error. -/
+theorem authenticate_compact {secret : ByteArray} (hs : secret.size = 32)
+    {header claims : String} (hh : '.' ∉ header.toList) (hc : '.' ∉ claims.toList) :
+    authenticate secret (compact header claims (signature secret header claims)) =
+      issuedAt header claims := by
+  rw [authenticate, ite_eq_right (by simp [hs]), signature,
+    parts_compact header claims _ hh hc (dot_not_mem_encode _)]
+  simp [Base64.decode_encode]
+
+/-- Every successful string build authenticates, with the issued-at time it was given. -/
+theorem authenticate_build {secret : ByteArray} {time : Nat} {token : String}
+    (hb : build secret time = .ok token) :
+    authenticate secret token = .ok ⟨time, 0⟩ := by
+  have hs : secret.size = 32 := by
+    by_contra hs
+    simp [build, hs] at hb
+  rw [build_eq_ok hs] at hb
+  cases hb
+  rw [authenticate_compact (header := headerPart) (claims := claimsPart time) hs
+    (dot_not_mem_encode _) (dot_not_mem_encode _), issuedAt_claimsPart]
+
+/-! ## The NumericDate comparison
+
+The clock check compares a JSON number with the clock exactly, whatever its exponent.
+
+Two theorems give it in full, one for each sign of that exponent.
+
+For a negative exponent, the statement scales the bounds instead of dividing the date.
+
+So the theorems prove the two shortcuts of the check correct for every input.
+
+A test can run those shortcuts, but on a huge exponent it cannot compute the value they replace.
+-/
+
+/-- Past the digits of a bound, a power of ten overshoots it. -/
+private theorem lt_ten_pow_of_length_lt {n k : Nat} (h : n.repr.length < k) : n < 10 ^ k :=
+  (Nat.length_repr_le_iff (by omega)).mp (Nat.le_of_lt h)
+
+/-- A date with a nonnegative exponent passes exactly when it is within 60 seconds of the clock.
+
+Its value is the mantissa times that power of ten. -/
+theorem within_eq_true_iff_of_nonneg {time : Json.Number} (he : 0 ≤ time.exponent)
+    (clock : Nat) :
+    Json.within time clock = true ↔
+      (clock : Int) - 60 ≤ time.mantissa * (10 ^ time.exponent.toNat : Nat) ∧
+        time.mantissa * (10 ^ time.exponent.toNat : Nat) ≤ (clock : Int) + 60 := by
+  unfold Json.within
+  dsimp only
+  rw [ite_eq_left he]
+  split
+  · rename_i hm
+    rw [hm]
+    simp
+  · split
+    · rename_i hm hbig
+      -- The power of ten overshoots the bound, so no multiple of it lands inside.
+      have hpow : clock + 60 < 10 ^ time.exponent.toNat := lt_ten_pow_of_length_lt hbig
+      have hcast : ((clock + 60 : Nat) : Int) < ((10 ^ time.exponent.toNat : Nat) : Int) := by
+        exact_mod_cast hpow
+      have hone : (1 : Int) ≤ time.mantissa ∨ time.mantissa ≤ -1 := by omega
+      refine iff_of_false (by simp) ?_
+      rintro ⟨hlo, hhi⟩
+      have hP : (0 : Int) ≤ ((10 ^ time.exponent.toNat : Nat) : Int) := by positivity
+      rcases hone with h1 | h1
+      · have : ((10 ^ time.exponent.toNat : Nat) : Int)
+            ≤ time.mantissa * ((10 ^ time.exponent.toNat : Nat) : Int) := by
+          have := Int.mul_le_mul_of_nonneg_right h1 hP
+          rwa [Int.one_mul] at this
+        push_cast at hcast hhi this
+        omega
+      · have : time.mantissa * ((10 ^ time.exponent.toNat : Nat) : Int)
+            ≤ -((10 ^ time.exponent.toNat : Nat) : Int) := by
+          have := Int.mul_le_mul_of_nonneg_right h1 hP
+          rwa [Int.neg_one_mul] at this
+        push_cast at hcast hlo this
+        omega
+    · simp
+
+/-- A date with a negative exponent passes exactly when the scaled bounds enclose its mantissa.
+
+That is the exact comparison of its value with the clock, with no division. -/
+theorem within_eq_true_iff_of_neg {time : Json.Number} (he : time.exponent < 0) (clock : Nat) :
+    Json.within time clock = true ↔
+      ((clock : Int) - 60) * ((10 ^ (-time.exponent).toNat : Nat) : Int) ≤ time.mantissa ∧
+        time.mantissa ≤ ((clock : Int) + 60) * ((10 ^ (-time.exponent).toNat : Nat) : Int) := by
+  unfold Json.within
+  dsimp only
+  rw [ite_eq_right (by omega : ¬ time.exponent ≥ 0)]
+  have hS : (0 : Int) < ((10 ^ (-time.exponent).toNat : Nat) : Int) := by positivity
+  split
+  · -- The magnitude is below one scale, so the floor and the ceiling are known outright.
+    rename_i hsmall
+    have hm : time.mantissa.natAbs < 10 ^ (-time.exponent).toNat :=
+      lt_ten_pow_of_length_lt hsmall
+    have hmS : |time.mantissa| < ((10 ^ (-time.exponent).toNat : Nat) : Int) := by
+      rw [Int.abs_eq_natAbs]
+      exact_mod_cast hm
+    rw [abs_lt] at hmS
+    split
+    · rename_i hz
+      rw [hz]
+      simp only [decide_eq_true_eq]
+      constructor
+      · intro h
+        exact ⟨by nlinarith [h.1], by nlinarith [h.2]⟩
+      · intro h
+        exact ⟨by nlinarith [h.1], by nlinarith [h.2]⟩
+    · split
+      · rename_i hz hpos
+        simp only [decide_eq_true_eq]
+        constructor
+        · intro h
+          exact ⟨by nlinarith [h.1], by nlinarith [h.2]⟩
+        · intro h
+          exact ⟨by nlinarith [h.1], by nlinarith [h.2]⟩
+      · rename_i hz hneg
+        simp only [decide_eq_true_eq]
+        have hlt : time.mantissa < 0 := by omega
+        constructor
+        · intro h
+          exact ⟨by nlinarith [h.1], by nlinarith [h.2]⟩
+        · intro h
+          exact ⟨by nlinarith [h.1], by nlinarith [h.2]⟩
+  · -- The scale divides out, so the floor is the quotient and the ceiling follows the remainder.
+    simp only [decide_eq_true_eq]
+    rw [Int.le_ediv_iff_mul_le hS]
+    split
+    · rename_i hdvd
+      have : time.mantissa / ((10 ^ (-time.exponent).toNat : Nat) : Int)
+          * ((10 ^ (-time.exponent).toNat : Nat) : Int) = time.mantissa :=
+        Int.ediv_mul_cancel (Int.dvd_of_emod_eq_zero hdvd)
+      constructor
+      · intro h
+        refine ⟨h.1, ?_⟩
+        have := (Int.mul_le_mul_iff_of_pos_right hS).mpr h.2
+        omega
+      · intro h
+        refine ⟨h.1, ?_⟩
+        exact (Int.mul_le_mul_iff_of_pos_right hS).mp (by omega)
+    · rename_i hdvd
+      have hne : time.mantissa ≠ ((clock : Int) + 60)
+          * ((10 ^ (-time.exponent).toNat : Nat) : Int) := by
+        intro heq
+        rw [heq] at hdvd
+        exact hdvd (Int.mul_emod_left _ _)
+      constructor
+      · intro h
+        refine ⟨h.1, ?_⟩
+        have : time.mantissa / ((10 ^ (-time.exponent).toNat : Nat) : Int) < (clock : Int) + 60 :=
+          by omega
+        have := (Int.ediv_lt_iff_lt_mul hS).mp this
+        omega
+      · intro h
+        refine ⟨h.1, ?_⟩
+        have hlt : time.mantissa < ((clock : Int) + 60)
+            * ((10 ^ (-time.exponent).toNat : Nat) : Int) := by omega
+        have := (Int.ediv_lt_iff_lt_mul hS).mpr hlt
+        omega
+
+/-- Integral NumericDates pass exactly within 60 seconds of the integral clock. -/
+theorem within_nat_iff (time clock : Nat) :
+    Json.within ⟨time, 0⟩ clock = true ↔ clock ≤ time + 60 ∧ time ≤ clock + 60 := by
+  rw [within_eq_true_iff_of_nonneg (time := ⟨time, 0⟩) (Int.le_refl 0)]
+  simp only [Int.toNat_zero, pow_zero, Int.ofNat_one, mul_one]
+  omega
+
+/-- A successfully built token passes with the same secret at every clock within 60 seconds. -/
+theorem check_build {secret : ByteArray} {time clock : Nat} {token : String}
+    (hb : build secret time = .ok token)
+    (hclock : clock ≤ time + 60 ∧ time ≤ clock + 60) : check secret token clock = true := by
+  rw [check, authenticate_build hb]
+  exact (within_nat_iff time clock).2 hclock
+
+/-- A token built with a 32-byte secret passes with it at every clock within 60 seconds. -/
+theorem check_build_of_size {secret : ByteArray} {time clock : Nat} (hs : secret.size = 32)
+    (hclock : clock ≤ time + 60 ∧ time ≤ clock + 60) :
+    check secret (compact headerPart (claimsPart time)
+      (signature secret headerPart (claimsPart time))) clock = true :=
+  check_build (build_eq_ok hs time) hclock
+
+/-- An algorithm other than HS256 cannot produce an issued-at time for this profile. -/
+theorem issuedAt_eq_error_of_algorithm_ne {header claims name : String}
+    (ha : algorithm header = .ok name) (hn : name ≠ "HS256") :
+    issuedAt header claims = .error .algorithm := by
+  simp only [issuedAt, ha, bind, Except.bind, ite_eq_left hn]
+  rfl
+
+/-- A token whose tag does not decode to the HS256 tag of its parts is refused, JSON unread. -/
+theorem authenticate_eq_error_of_tag_ne {secret : ByteArray} {token : String} {p : Parts}
+    (hs : secret.size = 32) (hp : parts token = some p)
+    (ht : Base64.decode p.signature ≠
+      .ok (Cryptography.Hash.Hmac.hmac secret (signingInput p.header p.claims))) :
+    authenticate secret token = .error .signature := by
+  unfold authenticate
+  simp only [hs, ne_eq, not_true_eq_false, ↓reduceIte, hp]
+  split
+  · rename_i mac h
+    rw [ite_eq_left (fun e => ht (by rw [h, e]))]
+    rfl
+  · rfl
+
+/-- An authenticated time is the issued-at time read from the token's own parts. -/
+theorem issuedAt_of_authenticate {secret : ByteArray} {token : String} {time : Json.Number}
+    {p : Parts} (hp : parts token = some p) (h : authenticate secret token = .ok time) :
+    issuedAt p.header p.claims = .ok time := by
+  unfold authenticate at h
+  simp only [hp] at h
+  split at h
+  · cases h
+  split at h
+  · split at h
+    · cases h
+    · exact h
+  · cases h
+
+/-- A compact token whose decoded algorithm differs from HS256 is refused. -/
+theorem check_eq_false_of_algorithm_ne {secret : ByteArray} {token : String} {clock : Nat}
+    {p : Parts} {name : String} (hp : parts token = some p)
+    (ha : algorithm p.header = .ok name) (hn : name ≠ "HS256") :
+    check secret token clock = false := by
+  unfold check
+  split
+  · rename_i time h
+    have hi := issuedAt_of_authenticate hp h
+    rw [issuedAt_eq_error_of_algorithm_ne ha hn] at hi
+    cases hi
+  · rfl
+
+/-! ## What an accepted token proves -/
+
+/-- Rejoining the three parts that a compact token splits into gives that token back. -/
+theorem compact_parts {token : String} {p : Parts} (hp : parts token = some p) :
+    compact p.header p.claims p.signature = token := by
+  unfold parts at hp
+  split at hp
+  · rename_i header claims signature hsplit
+    cases hp
+    have hj := List.intercalate_splitOn (xs := token.toList) (x := '.')
+    rw [hsplit] at hj
+    apply String.ext
+    simp only [compact, String.toList_append, String.toList_ofList,
+      show ".".toList = ['.'] by rfl]
+    simpa [List.intercalate] using hj
+  · cases hp
+
+/-- A secret of any length other than 32 bytes authenticates no token. -/
+theorem size_eq_of_authenticate {secret : ByteArray} {token : String} {time : Json.Number}
+    (h : authenticate secret token = .ok time) : secret.size = 32 := by
+  by_contra hs
+  simp only [authenticate] at h
+  split at h <;> cases h
+
+/-- An authenticated token splits at exactly two period separators. -/
+theorem exists_parts_of_authenticate {secret : ByteArray} {token : String} {time : Json.Number}
+    (h : authenticate secret token = .ok time) : ∃ p, parts token = some p := by
+  rcases hp : parts token with _ | p
+  · simp only [authenticate, hp] at h
+    split at h <;> cases h
+  · exact ⟨p, rfl⟩
+
+/-- An authenticated token's tag part decodes to the HS256 tag of its parts under the secret. -/
+theorem tag_of_authenticate {secret : ByteArray} {token : String} {time : Json.Number}
+    {p : Parts} (hp : parts token = some p) (h : authenticate secret token = .ok time) :
+    Base64.decode p.signature =
+      .ok (Cryptography.Hash.Hmac.hmac secret (signingInput p.header p.claims)) := by
+  by_contra ht
+  rw [authenticate_eq_error_of_tag_ne (size_eq_of_authenticate h) hp ht] at h
+  cases h
+
+/-- The tag part of an authenticated token is the base64url tag of its own header and claims.
+
+The encoder writes back every text that the decoder accepts, so the tag part is the encoded tag. -/
+theorem signature_eq_of_authenticate {secret : ByteArray} {token : String} {time : Json.Number}
+    {p : Parts} (hp : parts token = some p) (h : authenticate secret token = .ok time) :
+    p.signature = signature secret p.header p.claims := by
+  rw [signature]
+  exact (Base64.encode_decode _ _ (tag_of_authenticate hp h)).symm
+
+/-- An authenticated token is the compact form that signing its own parts with the secret gives.
+
+So for given parts, no other tag part authenticates under that secret.
+
+That only a holder of the secret can compute that tag is HMAC unforgeability, not proved here. -/
+theorem compact_signature_of_authenticate {secret : ByteArray} {token : String}
+    {time : Json.Number} {p : Parts} (hp : parts token = some p)
+    (h : authenticate secret token = .ok time) :
+    token = compact p.header p.claims (signature secret p.header p.claims) := by
+  rw [← signature_eq_of_authenticate hp h, compact_parts hp]
+
+/-- The header of an authenticated token names HS256. -/
+theorem algorithm_eq_of_authenticate {secret : ByteArray} {token : String} {time : Json.Number}
+    {p : Parts} (hp : parts token = some p) (h : authenticate secret token = .ok time) :
+    algorithm p.header = .ok "HS256" := by
+  have hi := issuedAt_of_authenticate hp h
+  rcases ha : algorithm p.header with e | name
+  · simp [issuedAt, ha, bind, Except.bind] at hi
+  · by_cases hn : name = "HS256"
+    · rw [hn]
+    · rw [issuedAt_eq_error_of_algorithm_ne ha hn] at hi
+      cases hi
+
+/-- The header of an authenticated token has no critical-extension field. -/
+theorem crit_eq_none_of_authenticate {secret : ByteArray} {token : String} {time : Json.Number}
+    {p : Parts} {fields : List (String × Json.Value)} (hp : parts token = some p)
+    (h : authenticate secret token = .ok time) (hf : objectFields p.header = some fields) :
+    fields.lookup "crit" = none := by
+  have ha := algorithm_eq_of_authenticate hp h
+  unfold algorithm at ha
+  simp only [hf] at ha
+  split at ha
+  · cases ha
+  · rename_i hc
+    cases hl : fields.lookup "crit" with
+    | none => rfl
+    | some value => rw [hl] at hc; simp at hc
+
+/-- A token that the clock check accepts authenticates.
+
+Its issued-at time is within 60 seconds of the clock. -/
+theorem exists_authenticate_of_check {secret : ByteArray} {token : String} {clock : Nat}
+    (h : check secret token clock = true) :
+    ∃ time, authenticate secret token = .ok time ∧ Json.within time clock = true := by
+  unfold check at h
+  split at h
+  · rename_i time ht
+    exact ⟨time, ht, h⟩
+  · cases h
+
+/-- The clock check accepts only the compact form of the token's parts signed with the secret. -/
+theorem compact_signature_of_check {secret : ByteArray} {token : String} {clock : Nat}
+    {p : Parts} (hp : parts token = some p) (h : check secret token clock = true) :
+    token = compact p.header p.claims (signature secret p.header p.claims) := by
+  obtain ⟨time, ha, -⟩ := exists_authenticate_of_check h
+  exact compact_signature_of_authenticate hp ha
+
+end EthLib.Engine.Jwt

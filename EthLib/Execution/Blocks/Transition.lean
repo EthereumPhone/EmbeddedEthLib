@@ -15,12 +15,12 @@ The block is first checked alone and against its parent.
 
 - From Fusaka, its RLP form must fit the most bytes of EIP-7934.
 - Its header must pass the checks against the parent's header.
-- At the DAO Fork and its next nine blocks, the extra data must be `dao-hard-fork`.
+- Before Paris, at the DAO Fork and its next nine blocks, the extra data must be `dao-hard-fork`.
 - Before Paris its ommers must be valid, and from Paris it has none.
 
 Then its body runs on the state after the parent.
 
-- At the first block of the DAO Fork, the ether of the DAO accounts moves first.
+- Before Paris, at the first block of the DAO Fork, the ether of the DAO accounts moves first.
 - From Dencun, the system calls at the start of the block come next.
 - Then each transaction must be able to enter the block, and runs.
 - From Shapella, the withdrawals follow.
@@ -192,13 +192,31 @@ def onBlock (block : BlockState)
   let tx ← (step (.ofBlock block)).mapError .state
   return tx.incorporateTxIntoBlock.parent
 
+/-- The block state at the start of a body at `fork`, after the DAO transfer if it runs there.
+
+The transfer runs at the first block of the DAO Fork on the chain `config`, and only before Paris.
+
+[EIP-779][eip-779] activates that fork at block 1,920,000 of Mainnet.
+
+The gate at Paris is a choice of this specification, so that no later block can run the transfer.
+
+The extra data rule of the fork has the same gate.
+
+[eip-779]: https://eips.ethereum.org/EIPS/eip-779#specification -/
+def daoTransfer (config : ChainConfig) (fork : Fork) (number : Nat) (start : BlockState) :
+    Except BlockError BlockState :=
+  if fork < .paris ∧ daoForkBlock config = some number then onBlock start (applyDaoFork fork)
+  else pure start
+
 /-- The requests of a block at `fork`, after its transactions and withdrawals.
 
-The deposits come from the logs of the block, the other requests from their contracts. -/
-def blockRequests {fork : Fork} (env : BlockEnvironment fork) (body : BodyState)
-    (logs : List Log) : Except BlockError (BodyState × List ByteArray) := do
+The deposits come from the logs of the deposit contract at `depositContract`.
+
+The other requests come from their contracts. -/
+def blockRequests {fork : Fork} (depositContract : Address) (env : BlockEnvironment fork)
+    (body : BodyState) (logs : List Log) : Except BlockError (BodyState × List ByteArray) := do
   if .pectra ≤ fork then
-    let deposits ← (depositRequests logs).mapError .deposit
+    let deposits ← (depositRequests depositContract logs).mapError .deposit
     let (body, requests) ← readRequests env body
     return (body, requestList DEPOSIT_REQUEST_TYPE deposits ++ requests)
   else return (body, [])
@@ -223,7 +241,7 @@ def accessListHashOf (fork : Fork) (body : BodyState) (gasLimit : Nat) :
 
 /-- Run the body of the block `block` on the block state `start`, at `fork`.
 
-At the first block of the DAO Fork on the chain `config`, the DAO ether moves first.
+Before Paris, at the first block of the DAO Fork on the chain `config`, the DAO ether moves first.
 
 The system calls at the start run at position 0 of the block access list.
 
@@ -233,8 +251,7 @@ From Glamsterdam, the body then builds its block access list, which must fit the
 def applyBody {fork : Fork} (config : ChainConfig) (env : BlockEnvironment fork)
     (block : Block fork Transaction) (start : BlockState) :
     Except BlockError (BlockOutput fork) := do
-  let state ← if daoForkBlock config = some block.header.number then
-      onBlock start (applyDaoFork fork) else pure start
+  let state ← daoTransfer config fork block.header.number start
   let body ← (startSystemCalls env block.header.parentHash (.init state)).mapError .aborted
   let output ← applyTransactions env body block.transactions
   let body := output.body.beginIndex (block.transactions.length + 1)
@@ -242,7 +259,7 @@ def applyBody {fork : Fork} (config : ChainConfig) (env : BlockEnvironment fork)
       let tx ← (withdrawalState fork body.block (block.withdrawals h)).mapError .state
       (body.join tx).mapError .state
     else pure body
-  let (body, requests) ← blockRequests env body output.logs
+  let (body, requests) ← blockRequests config.depositContractAddress env body output.logs
   let ommers := block.ommers.map fun ommer => (ommer.2.coinbase, ommer.2.number)
   let state ← onBlock body.block fun tx =>
     payRewards fork tx block.header.coinbase block.header.number ommers
@@ -339,6 +356,34 @@ def outputChecks {fork : Fork} (header : Header fork) (output : BlockOutput fork
       .wrongBlockAccessListHash)]
   else [])
 
+/-- What the body of a block gives on its chain: its output, and the roots of the header. -/
+structure BodyResult (fork : Fork) where
+  /-- What the body gave. -/
+  output : BlockOutput fork
+  /-- The roots of the transactions, the state after the block, the receipts and the withdrawals. -/
+  roots : OutputRoots
+
+/-- The state after a block whose body gave `result`. -/
+def BodyResult.post {fork : Fork} (result : BodyResult fork) : State :=
+  result.output.block.applyChanges
+
+/-- Run the body of `block` on the state of the chain `chain`, and compute the roots it gives.
+
+The body runs in the environment of its header and of the recent hashes of the chain.
+
+The body reads none of the header fields that it gives: the roots, the gas counts, the logs Bloom.
+
+Nor does it read the requests hash and the block access list hash.
+
+So a builder can run it before it fills those fields. -/
+def runBody (chain : BlockChain) {fork : Fork} (block : Block fork Transaction) :
+    Except BlockError (BodyResult fork) := do
+  let hashes ← recentHashes chain.recent
+  let env := blockEnvironment chain.config hashes block.header
+  let output ← applyBody chain.config env block ⟨chain.state, ∅, ∅, ∅, ∅⟩
+  let roots ← outputRoots block.transactions block.withdrawals output output.block.applyChanges
+  return ⟨output, roots⟩
+
 /-! ## The transition -/
 
 /-- Run the state transition of `block` at `fork` on the chain `chain`, and give the state after.
@@ -354,12 +399,8 @@ def stateTransition (chain : BlockChain) {fork : Fork} (block : Block fork Trans
   unless chain.config.activeFork block.header.number block.header.timestamp.toNat = some fork do
     throw .wrongFork
   checkBlock chain.config checkSeal chain.recent block
-  let hashes ← recentHashes chain.recent
-  let env := blockEnvironment chain.config hashes block.header
-  let output ← applyBody chain.config env block ⟨chain.state, ∅, ∅, ∅, ∅⟩
-  let post := output.block.applyChanges
-  let roots ← outputRoots block.transactions block.withdrawals output post
-  firstFailure (outputChecks block.header output roots)
-  return post
+  let result ← runBody chain block
+  firstFailure (outputChecks block.header result.output result.roots)
+  return result.post
 
 end EthLib.Execution.Blocks

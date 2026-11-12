@@ -46,7 +46,8 @@ Each instruction keeps the size of memory a multiple of 32.
 
 namespace EthLib.Execution.Evm
 
-open EthLib.Base (Fork U256 bytesToNat natToBytes byteAt byteAt_append_zeros byteAt_eq_getD)
+open EthLib.Base (Fork U256 bytesToNat natToBytes byteAt byteAt_append_zeros byteAt_eq_getD
+  natToBytes_add)
 open GasCosts
 
 variable {fork : Fork} {Meter : Type} [GasMeter Meter]
@@ -54,6 +55,27 @@ variable {fork : Fork} {Meter : Type} [GasMeter Meter]
 /-- A word has 32 bytes. -/
 theorem size_wordBytes (word : U256) : (wordBytes word).size = 32 := by
   simp [wordBytes, ← ByteArray.size_data]
+
+/-- The 32 bytes of a word: its high part on `a` bytes, then its low part on `b` bytes. -/
+theorem wordBytes_eq_append (w : U256) {a b : Nat} (h : a + b = 32) :
+    wordBytes w = ⟨(natToBytes a (w.toNat / 256 ^ b)).toArray⟩ ++
+      ⟨(natToBytes b w.toNat).toArray⟩ := by
+  apply ByteArray.ext
+  rw [ByteArray.data_append]
+  show (natToBytes 32 w.toNat).toArray = _
+  rw [← h, natToBytes_add]
+  simp
+
+/-- Byte `i` of a word is the word over `256 ^ (31 - i)`, modulo 256. -/
+theorem byteAt_wordBytes (w : U256) {i : Nat} (hi : i < 32) :
+    EthLib.Base.byteAt (wordBytes w) i = UInt8.ofNat (w.toNat / 256 ^ (31 - i)) := by
+  rw [wordBytes_eq_append w (a := i + 1) (b := 31 - i) (by omega), EthLib.Base.byteAt_append]
+  generalize w.toNat / 256 ^ (31 - i) = n
+  have hs : (⟨(EthLib.Base.natToBytes (i + 1) n).toArray⟩ : ByteArray).size = i + 1 := by
+    simp [ByteArray.size, EthLib.Base.natToBytes_length]
+  rw [hs, ite_eq_left (by omega), EthLib.Base.byteAt_eq_getD, EthLib.Base.natToBytes_succ]
+  simp [EthLib.Base.natToBytes_length]
+  exact UInt8.ofNat_mod_size
 
 /-- The word of 32 bytes that a write of a word puts in memory is that word. -/
 theorem loadWord_memoryWrite_wordBytes {memory : ByteArray} {start : Nat} (word : U256)

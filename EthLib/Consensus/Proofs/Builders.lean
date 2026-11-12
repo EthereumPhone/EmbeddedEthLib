@@ -3,6 +3,7 @@ module
 public import EthLib.Base.Proofs.MapM
 public import EthLib.Base.Proofs.Uint64
 public import EthLib.Consensus.Builders
+public import EthLib.Consensus.Proofs.Accessors
 public import EthLib.Serialization.Proofs.Ssz.Typed.Rooted
 
 /-!
@@ -14,6 +15,8 @@ Below 2^40, clearing the flag gives the builder index back.
 
 An index that names a builder comes back from its builder index.
 
+So below 2^40 the index of a builder names it alone.
+
 No index below 2^40 names a builder, so no validator of a registry within a limit of 2^40 does.
 
 What a builder owes fits in 64 bits exactly when its sum does, and then it is that sum.
@@ -21,6 +24,8 @@ What a builder owes fits in 64 bits exactly when its sum does, and then it is th
 A builder can cover a bid exactly when its balance holds the bid, its debt and the minimum deposit.
 
 With at least six slots in an epoch, the quorum of a payment never overflows.
+
+On a preset whose increment per slot is large enough, every quorum is at least one gwei.
 
 A builder that starts to exit is no longer active, unless its withdrawable epoch is the far future.
 
@@ -105,6 +110,39 @@ theorem isBuilderIndex_eq_false_of_lt {index : ValidatorIndex} (small : index.to
     simp [getElem_forty_eq_false small]
   · simp [forty, inRange]
 
+/-- Below 2^40, two builder indices give the same index exactly when they are equal. -/
+theorem convertBuilderIndexToValidatorIndex_inj {first second : BuilderIndex}
+    (one : first.toNat < 2 ^ 40) (two : second.toNat < 2 ^ 40) :
+    convertBuilderIndexToValidatorIndex first = convertBuilderIndexToValidatorIndex second ↔
+      first = second := by
+  constructor
+  · intro same
+    rw [← convertValidatorIndexToBuilderIndex_convertBuilderIndexToValidatorIndex one, same,
+      convertValidatorIndexToBuilderIndex_convertBuilderIndexToValidatorIndex two]
+  · intro same
+    rw [same]
+
+/-- An index below 2^40 is the index of no builder. -/
+theorem ne_convertBuilderIndexToValidatorIndex_of_lt {named : ValidatorIndex}
+    (small : named.toNat < 2 ^ 40) (index : BuilderIndex) :
+    named ≠ convertBuilderIndexToValidatorIndex index := by
+  intro same
+  have flag := isBuilderIndex_convertBuilderIndexToValidatorIndex index
+  rw [← same, isBuilderIndex_eq_false_of_lt small] at flag
+  cases flag
+
+/-- An index that names a builder clears to a builder index below 2^40 exactly when it is its index.
+-/
+theorem convertValidatorIndexToBuilderIndex_eq_iff {named : ValidatorIndex} {index : BuilderIndex}
+    (builder : isBuilderIndex named = true) (small : index.toNat < 2 ^ 40) :
+    convertValidatorIndexToBuilderIndex named = index ↔
+      named = convertBuilderIndexToValidatorIndex index := by
+  constructor
+  · intro same
+    rw [← same, convertBuilderIndexToValidatorIndex_convertValidatorIndexToBuilderIndex builder]
+  · intro same
+    rw [same, convertValidatorIndexToBuilderIndex_convertBuilderIndexToValidatorIndex small]
+
 /-- The registry limit of both presets is 2^40. -/
 theorem registryLimit_presets :
     Preset.mainnet.VALIDATOR_REGISTRY_LIMIT.toNat = 2 ^ 40 ∧
@@ -120,6 +158,14 @@ theorem isBuilderIndex_eq_false_of_registry {state : BeaconState preset fork}
     {index : ValidatorIndex} (member : index.toNat < state.validators.data.size) :
     isBuilderIndex index = false :=
   isBuilderIndex_eq_false_of_lt (Nat.lt_of_lt_of_le member (Nat.le_trans within limit))
+
+/-- The lookup returns a builder exactly when it is the one at its index of the registry. -/
+theorem getBuilder_eq_ok_iff {state : BeaconState preset fork} {gloas : .glamsterdam ≤ fork}
+    {index : BuilderIndex} {builder : Builder} :
+    getBuilder state gloas index = .ok builder ↔
+      (state.builders gloas).data[index.toNat]? = some builder := by
+  unfold getBuilder
+  split <;> simp_all
 
 /-- What a builder owes succeeds exactly when its sum is below 2^64, and then it is that sum. -/
 theorem getPendingBalanceToWithdrawForBuilder_ok_iff {state : BeaconState preset fork}
@@ -175,6 +221,65 @@ theorem canBuilderCoverBid_eq_ok_true_iff {state : BeaconState preset fork}
     simp only [UInt64.not_lt.mpr fits, ite_false]
     simp only [pure, Except.pure, Except.ok.injEq, decide_eq_true_eq]
     rw [UInt64.le_iff_toNat_le, UInt64.toNat_sub_of_le _ _ fits, sum]
+    omega
+
+/-- A preset whose payment quorum is at least one gwei on every state.
+
+Every total active balance is at least one effective balance increment.
+
+So the quorum is at least the share of one slot in that increment, times six, divided by ten.
+
+Each division rounds down, so the preset needs that share, times six, to be at least ten. -/
+abbrev Preset.PaymentQuorumPositive (preset : Preset) : Prop :=
+  BUILDER_PAYMENT_THRESHOLD_DENOMINATOR.toNat ≤
+    preset.EFFECTIVE_BALANCE_INCREMENT.toNat / preset.SLOTS_PER_EPOCH.toNat *
+      BUILDER_PAYMENT_THRESHOLD_NUMERATOR.toNat
+
+/-- The mainnet and minimal presets have a payment quorum of at least one gwei. -/
+theorem paymentQuorumPositive_presets :
+    Preset.mainnet.PaymentQuorumPositive ∧ Preset.minimal.PaymentQuorumPositive := by
+  decide
+
+/-- On a preset with this property, every quorum that is computed is at least one gwei.
+
+So a payment of zero weight, which no attester voted for, is never released. -/
+theorem getBuilderPaymentQuorumThreshold_pos {state : BeaconState preset fork}
+    (positive : preset.PaymentQuorumPositive) {quorum : Gwei}
+    (computed : getBuilderPaymentQuorumThreshold state = .ok quorum) : 0 < quorum := by
+  simp only [getBuilderPaymentQuorumThreshold, bind_ok_iff, liftArith, mapError_ok_iff,
+    mulChecked_ok_iff, pure, Except.pure, Except.ok.injEq] at computed
+  obtain ⟨total, totalOk, product, ⟨-, productIs⟩, rfl⟩ := computed
+  have least := UInt64.le_iff_toNat_le.mp (le_getTotalBalance (getTotalActiveBalance_ok totalOk))
+  -- The share of one slot in the total is at least its share in one increment.
+  have share : preset.EFFECTIVE_BALANCE_INCREMENT.toNat / preset.SLOTS_PER_EPOCH.toNat ≤
+      (total / preset.SLOTS_PER_EPOCH).toNat := by
+    rw [UInt64.toNat_div]
+    exact Nat.div_le_div_right least
+  have enough : BUILDER_PAYMENT_THRESHOLD_DENOMINATOR.toNat ≤ product.toNat := by
+    rw [productIs]
+    exact Nat.le_trans positive (Nat.mul_le_mul_right _ share)
+  rw [UInt64.lt_iff_toNat_lt, UInt64.toNat_div]
+  have ten : BUILDER_PAYMENT_THRESHOLD_DENOMINATOR.toNat = 10 := rfl
+  rw [ten] at enough ⊢
+  simp only [UInt64.toNat_zero]
+  omega
+
+/-- With a payment quorum of at least one gwei, an epoch has at least one slot.
+
+Twice its slots then fit in 64 bits. -/
+theorem Preset.PaymentQuorumPositive.slotsPerEpoch_bounds
+    (positive : preset.PaymentQuorumPositive) :
+    1 ≤ preset.SLOTS_PER_EPOCH.toNat ∧ 2 * preset.SLOTS_PER_EPOCH.toNat < 2 ^ 64 := by
+  have share : 10 ≤ preset.EFFECTIVE_BALANCE_INCREMENT.toNat / preset.SLOTS_PER_EPOCH.toNat * 6 :=
+    positive
+  have := preset.EFFECTIVE_BALANCE_INCREMENT.toNat_lt
+  rcases Nat.eq_zero_or_pos preset.SLOTS_PER_EPOCH.toNat with zero | pos
+  · simp [zero] at share
+  · have := Nat.div_mul_le_self preset.EFFECTIVE_BALANCE_INCREMENT.toNat
+      preset.SLOTS_PER_EPOCH.toNat
+    have two : 2 ≤ preset.EFFECTIVE_BALANCE_INCREMENT.toNat / preset.SLOTS_PER_EPOCH.toNat := by
+      omega
+    have := Nat.mul_le_mul_right preset.SLOTS_PER_EPOCH.toNat two
     omega
 
 /-- With at least six slots in an epoch, the quorum of a payment never overflows.
@@ -286,6 +391,44 @@ theorem owedBy_set {index : BuilderIndex} :
     simp only [owedBy, List.set_cons_succ, List.map_cons, List.sum_cons, List.getElem_cons_succ,
       List.map_nil, List.sum_nil] at step ⊢
     omega
+
+/-- What a builder owes in two lists is the sum of what it owes in each. -/
+theorem owedBy_append {index : BuilderIndex}
+    (first second : List BuilderPendingWithdrawal) :
+    owedBy index (first ++ second) = owedBy index first + owedBy index second := by
+  simp [owedBy]
+
+/-- What a builder owes in the payments that pass a filter is at most what it owes in all of them.
+-/
+theorem owedBy_filter_le {index : BuilderIndex} {keep : BuilderPendingPayment → Bool}
+    (payments : List BuilderPendingPayment) :
+    owedBy index ((payments.filter keep).map (·.withdrawal)) ≤
+      owedBy index (payments.map (·.withdrawal)) := by
+  induction payments with
+  | nil => simp [owedBy]
+  | cons first rest step =>
+    cases kept : keep first <;> simp [owedBy, kept] at step ⊢ <;> omega
+
+/-- What a builder owes in the payments that pass a filter, plus one that fails it, is bounded.
+
+The bound is what it owes in all of them. -/
+theorem owedBy_filter_add_le {index : BuilderIndex} {keep : BuilderPendingPayment → Bool} :
+    ∀ {payments : List BuilderPendingPayment} {k : Nat} (inside : k < payments.length),
+      keep payments[k] = false →
+      owedBy index ((payments.filter keep).map (·.withdrawal)) +
+          owedBy index [payments[k].withdrawal] ≤
+        owedBy index (payments.map (·.withdrawal))
+  | [], _, inside, _ => absurd inside (Nat.not_lt_zero _)
+  | first :: rest, 0, _, dropped => by
+    have := owedBy_filter_le (index := index) (keep := keep) rest
+    simp only [List.getElem_cons_zero] at dropped
+    simp [dropped, owedBy] at this ⊢
+    omega
+  | first :: rest, k + 1, inside, dropped => by
+    have step := owedBy_filter_add_le (index := index) (keep := keep) (payments := rest) (k := k)
+      (by simpa using inside) (by simpa using dropped)
+    simp only [List.getElem_cons_succ] at step ⊢
+    cases kept : keep first <;> simp [owedBy, kept] at step ⊢ <;> omega
 
 /-- Settling a payment keeps what each builder owes.
 

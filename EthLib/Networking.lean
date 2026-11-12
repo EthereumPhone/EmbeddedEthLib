@@ -9,8 +9,10 @@ public import EthLib.Networking.Discv5.Identity
 public import EthLib.Networking.Discv5.Message
 public import EthLib.Networking.Discv5.Packet
 public import EthLib.Networking.Discv5.Session
+public import EthLib.Networking.Encoding.Protobuf
+public import EthLib.Networking.Encoding.Uvarint
 public import EthLib.Networking.Encoding.Varint
-public import EthLib.Networking.Enr.Base64
+public import EthLib.Networking.Noise.Identity
 public import EthLib.Networking.Enr.Consensus
 public import EthLib.Networking.Enr.Eth
 public import EthLib.Networking.Enr.Record
@@ -18,9 +20,13 @@ public import EthLib.Networking.Enr.V4
 public import EthLib.Networking.Gossip.MessageId
 public import EthLib.Networking.Gossip.Parameters
 public import EthLib.Networking.Gossip.Payload
+public import EthLib.Networking.Gossip.Rpc
 public import EthLib.Networking.Gossip.Subnet
 public import EthLib.Networking.Gossip.Topic
 public import EthLib.Networking.Gossip.Validation
+public import EthLib.Networking.Libp2p.Mplex
+public import EthLib.Networking.Libp2p.Multistream
+public import EthLib.Networking.Libp2p.Yamux
 public import EthLib.Networking.ReqResp.Bounds
 public import EthLib.Networking.ReqResp.Encoding
 public import EthLib.Networking.Rlpx.Ecies

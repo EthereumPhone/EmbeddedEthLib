@@ -1,10 +1,12 @@
 module
 
 public import EthLib.Base.Except
+public import EthLib.Base.Proofs.List
 public import EthLib.Base.Proofs.MapM
 public import EthLib.Execution.Blocks.Transition
 public import EthLib.Execution.Proofs.Blocks.AccessListBuilder
 public import EthLib.Execution.Proofs.Blocks.Validate
+public import EthLib.Execution.Proofs.State.Tracker
 
 /-!
 # Proofs: the state transition of a block
@@ -18,6 +20,8 @@ It also used the gas that its header states, and its Bloom filter is the filter 
 Its fork is the active fork of its chain at its number and its time.
 
 A transaction that cannot enter the block makes the block invalid, with its own error.
+
+The DAO transfer runs only before Paris, at the block that the chain configuration names.
 
 Before Glamsterdam a body gives no block access list.
 
@@ -130,6 +134,22 @@ theorem recentHashes_eq_mapM_hash {recent : List RecentBlock} {hashes : List Has
     rw [getElem_congr_idx (show recent.length - 256 + i = recent.length - 1 by omega), hr, hh]
     simp only [List.length_map, List.length_drop, Nat.sub_sub_self h255, List.getElem_singleton]
 
+/-! ## The checks of the block -/
+
+/-- Before Paris, a block that passes its checks has ommers that pass theirs. -/
+theorem checkBlock_validateOmmers {config : ChainConfig} {checkSeal : Bool}
+    {recent : List RecentBlock} {block : Block fork Transaction} (hParis : fork < .paris)
+    (h : checkBlock config checkSeal recent block = .ok ()) :
+    validateOmmers config checkSeal recent block.header block.ommers = .ok () := by
+  cases hv : validateOmmers config checkSeal recent block.header block.ommers with
+  | ok u => rfl
+  | error e =>
+    exfalso
+    unfold checkBlock at h
+    simp only [hParis, ↓reduceIte, hv, Except.mapError, bind, Except.bind, throw, throwThe,
+      MonadExceptOf.throw] at h
+    repeat' (first | contradiction | (split at h))
+
 /-! ## The checks against the output -/
 
 /-- The roots that the output gives hold the state root of the state after the block. -/
@@ -185,6 +205,21 @@ theorem accessListHash_of_outputChecks {header : Header fork} {output : BlockOut
     exact List.mem_append_right _ (List.mem_singleton_self _)
   exact of_decide_eq_true (all _ last)
 
+/-- From Dencun, a block that passes the checks used the blob gas that its header states. -/
+theorem blobGasUsed_of_outputChecks {header : Header fork} {output : BlockOutput fork}
+    {roots : OutputRoots} (hFork : .dencun ≤ fork)
+    (h : firstFailure (outputChecks header output roots) = .ok ()) :
+    output.gas.blob = (header.blobGasUsed hFork).toNat := by
+  have all := (firstFailure_eq_ok_iff _).mp h
+  have blob : (decide (output.gas.blob = (header.blobGasUsed hFork).toNat),
+      BlockError.wrongBlobGasUsed (header.blobGasUsed hFork).toNat output.gas.blob) ∈
+        outputChecks header output roots := by
+    unfold outputChecks
+    simp only [hFork, ↓reduceDIte]
+    exact List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _
+      (List.mem_singleton_self _)))
+  exact of_decide_eq_true (all _ blob)
+
 /-! ## The block access list -/
 
 /-- Before Glamsterdam, a body gives no block access list. -/
@@ -208,7 +243,54 @@ theorem accessListHashOf_eq_ok {body : BodyState} {gasLimit : Nat} {hash : Optio
   cases h
   rfl
 
+/-! ## The DAO transfer -/
+
+/-- From Paris the DAO transfer leaves the block state as it was, whatever the configuration. -/
+theorem daoTransfer_of_paris_le {config : ChainConfig} {number : Nat} {start : BlockState}
+    (h : .paris ≤ fork) : daoTransfer config fork number start = .ok start := by
+  have hNot : ¬fork < .paris := Nat.not_lt.mpr h
+  simp only [daoTransfer, hNot, false_and, ↓reduceIte]
+  rfl
+
+/-- At a block that the configuration does not name for the DAO Fork, the state stays. -/
+theorem daoTransfer_of_daoForkBlock_ne {config : ChainConfig} {number : Nat} {start : BlockState}
+    (h : daoForkBlock config ≠ some number) :
+    daoTransfer config fork number start = .ok start := by
+  simp only [daoTransfer, h, and_false, ↓reduceIte]
+  rfl
+
+/-- Before Paris, at the DAO Fork block of the configuration, the DAO ether moves. -/
+theorem daoTransfer_of_lt_paris {config : ChainConfig} {number : Nat} {start : BlockState}
+    (h : fork < .paris) (hBlock : daoForkBlock config = some number) :
+    daoTransfer config fork number start = onBlock start (applyDaoFork fork) := by
+  simp only [daoTransfer, h, hBlock, and_self, ↓reduceIte]
+
 /-! ## The transactions -/
+
+/-- A transaction that enters the body passes the inclusion check, and its run succeeds.
+
+The gas counts of the block then grow by those of that run.
+
+The gas used that the receipts add up grows by the gas used of the run.
+
+The body before it begins position `index + 1`, and the run then joins it. -/
+theorem applyTransaction_eq_ok {env : BlockEnvironment fork} {index : Nat}
+    {before after : BodyOutput fork} {tx : Transaction}
+    (h : applyTransaction env index before tx = .ok after) :
+    ∃ included out,
+      checkInclusion env.chainId env before.gas (.ofBlock before.block) tx = .ok included ∧
+      processTransaction env before.block included tx = .ok out ∧
+      after.gas = before.gas.add out.blockGas ∧
+      after.cumulativeGasUsed = before.cumulativeGasUsed + out.gasUsed ∧
+      (before.body.beginIndex (index + 1)).join out.state = .ok after.body := by
+  unfold applyTransaction at h
+  obtain ⟨included, hIncluded, h⟩ := bind_ok_iff.mp h
+  obtain ⟨out, hOut, h⟩ := bind_ok_iff.mp h
+  obtain ⟨body, hBody, h⟩ := bind_ok_iff.mp h
+  refine ⟨included, out, mapError_ok_iff.mp hIncluded, mapError_ok_iff.mp hOut, ?_⟩
+  dsimp only at h
+  split at h <;>
+    (obtain ⟨_, -, h⟩ := bind_ok_iff.mp h; cases h; exact ⟨rfl, rfl, mapError_ok_iff.mp hBody⟩)
 
 /-- A transaction that cannot enter its block makes the block invalid, with its error. -/
 theorem applyTransaction_of_checkInclusion {env : BlockEnvironment fork} {index : Nat}
@@ -218,7 +300,151 @@ theorem applyTransaction_of_checkInclusion {env : BlockEnvironment fork} {index 
     applyTransaction env index before tx = .error (.invalidTransaction index e) := by
   simp [applyTransaction, h, Except.mapError, bind, Except.bind]
 
+/-- A call that joins the body leaves each account as the call left it. -/
+theorem BodyState.getAccount_join {body body' : BodyState} {tx : State.TransactionState}
+    (h : body.join tx = .ok body') (address : Address) :
+    (State.TransactionState.ofBlock body'.block).getAccount address = tx.getAccount address := by
+  unfold BodyState.join at h
+  obtain ⟨_, -, h⟩ := bind_ok_iff.mp h
+  cases h
+  exact State.TransactionState.getAccount_ofBlock_incorporateTxIntoBlock tx address
+
+/-- A run of transactions reaches each of them, and the result of each relates to the end.
+
+The relation must be reflexive and transitive.
+
+Each transaction that enters the body relates the output before it to the output after it.
+
+Then the body before the first transaction is related to the end.
+
+For the transaction at index `i`, from 0, the transactions before it run.
+
+That transaction then enters the body, and its result is related to the end. -/
+theorem applyTransactions_steps {env : BlockEnvironment fork} {body : BodyState}
+    {transactions : List Transaction} {output : BodyOutput fork}
+    (R : BodyOutput fork → BodyOutput fork → Prop) (refl : ∀ a, R a a)
+    (trans : ∀ {a b c}, R a b → R b c → R a c)
+    (step : ∀ {index before after tx}, applyTransaction env index before tx = .ok after →
+      R before after)
+    (h : applyTransactions env body transactions = .ok output) :
+    R ⟨body, .zero, 0, [], []⟩ output ∧ ∀ i (hi : i < transactions.length), ∃ before next,
+      applyTransactions env body (transactions.take i) = .ok before ∧
+      applyTransaction env i before transactions[i] = .ok next ∧ R next output := by
+  obtain ⟨hStart, hSteps⟩ := foldlM_ok_steps R refl trans (fun _ _ _ hStep => step hStep) h
+  refine ⟨hStart, fun i hi => ?_⟩
+  obtain ⟨before, next, hBefore, hNext, hEnd⟩ := hSteps i (by simpa using hi)
+  simp only [List.getElem_zipIdx, Nat.zero_add] at hNext
+  refine ⟨before, next, ?_, hNext, hEnd⟩
+  unfold applyTransactions
+  rw [zipIdx_take]
+  exact hBefore
+
+/-! ## The body -/
+
+/-- A step that runs on a block state succeeds on it, and its writes give the block state after. -/
+theorem onBlock_eq_ok {block block' : BlockState}
+    {step : State.TransactionState → Except State.StateError State.TransactionState}
+    (h : onBlock block step = .ok block') :
+    ∃ tx, step (.ofBlock block) = .ok tx ∧ block' = tx.incorporateTxIntoBlock.parent := by
+  unfold onBlock at h
+  obtain ⟨tx, htx, h⟩ := bind_ok_iff.mp h
+  cases h
+  exact ⟨tx, mapError_ok_iff.mp htx, rfl⟩
+
+/-- A body that runs takes each step, in order, and gives the gas counts of its transactions.
+
+The DAO transfer runs first, then the system calls that start the block, then the transactions.
+
+From Shapella the withdrawals join the body after them, at the position after the transactions.
+
+The requests then run, and the rewards last, which give the block state of the output.
+
+The builder after the requests is the builder of the output, and gives its block access list hash.
+
+The gas counts and the gas used that the receipts add up are those of the transactions. -/
+theorem applyBody_eq_ok {config : ChainConfig} {env : BlockEnvironment fork}
+    {block : Block fork Transaction} {start : BlockState} {output : BlockOutput fork}
+    (h : applyBody config env block start = .ok output) :
+    ∃ state body txs withdrawn requested,
+      daoTransfer config fork block.header.number start = .ok state ∧
+      startSystemCalls env block.header.parentHash (.init state) = .ok body ∧
+      applyTransactions env body block.transactions = .ok txs ∧
+      (∀ hShapella : .shapella ≤ fork, ∃ tx,
+        withdrawalState fork txs.body.block (block.withdrawals hShapella) = .ok tx ∧
+        (txs.body.beginIndex (block.transactions.length + 1)).join tx = .ok withdrawn) ∧
+      (¬.shapella ≤ fork → withdrawn = txs.body.beginIndex (block.transactions.length + 1)) ∧
+      blockRequests config.depositContractAddress env withdrawn txs.logs =
+        .ok (requested, output.requests) ∧
+      onBlock requested.block (fun tx => payRewards fork tx block.header.coinbase
+        block.header.number (block.ommers.map fun ommer => (ommer.2.coinbase, ommer.2.number))) =
+        .ok output.block ∧
+      output.body.builder = requested.builder ∧
+      accessListHashOf fork requested block.header.gasLimit = .ok output.accessListHash ∧
+      output.gas = txs.gas ∧ output.cumulativeGasUsed = txs.cumulativeGasUsed := by
+  unfold applyBody at h
+  dsimp only at h
+  obtain ⟨state, hState, h⟩ := bind_ok_iff.mp h
+  obtain ⟨body, hBody, h⟩ := bind_ok_iff.mp h
+  obtain ⟨txs, hTxs, h⟩ := bind_ok_iff.mp h
+  split at h
+  · rename_i hShapella
+    obtain ⟨tx, hTx, h⟩ := bind_ok_iff.mp h
+    obtain ⟨withdrawn, hJoin, h⟩ := bind_ok_iff.mp h
+    obtain ⟨⟨requested, requests⟩, hRequests, h⟩ := bind_ok_iff.mp h
+    dsimp only at h
+    obtain ⟨rewarded, hRewarded, h⟩ := bind_ok_iff.mp h
+    obtain ⟨_, hHash, h⟩ := bind_ok_iff.mp h
+    cases h
+    exact ⟨state, body, txs, withdrawn, requested, hState, mapError_ok_iff.mp hBody, hTxs,
+      fun _ => ⟨tx, mapError_ok_iff.mp hTx, mapError_ok_iff.mp hJoin⟩,
+      fun hNot => absurd hShapella hNot, hRequests, hRewarded, rfl, hHash, rfl, rfl⟩
+  · rename_i hShapella
+    obtain ⟨withdrawn, hWithdrawn, h⟩ := bind_ok_iff.mp h
+    cases hWithdrawn
+    obtain ⟨⟨requested, requests⟩, hRequests, h⟩ := bind_ok_iff.mp h
+    dsimp only at h
+    obtain ⟨rewarded, hRewarded, h⟩ := bind_ok_iff.mp h
+    obtain ⟨_, hHash, h⟩ := bind_ok_iff.mp h
+    cases h
+    exact ⟨state, body, txs, _, requested, hState, mapError_ok_iff.mp hBody, hTxs,
+      fun hYes => absurd hYes hShapella, fun _ => rfl, hRequests, hRewarded, rfl, hHash, rfl,
+      rfl⟩
+
+/-- From Glamsterdam, a body gives the hash of the list that its builder built. -/
+theorem applyBody_accessListHash {config : ChainConfig} {env : BlockEnvironment fork}
+    {block : Block fork Transaction} {start : BlockState} {output : BlockOutput fork}
+    (h : applyBody config env block start = .ok output) (hFork : .glamsterdam ≤ fork) :
+    ∃ value, output.accessListHash = some value ∧
+      BlockAccessList.hash output.body.builder.build = .ok value := by
+  obtain ⟨-, -, -, -, requested, -, -, -, -, -, -, -, hBuilder, hHash, -⟩ := applyBody_eq_ok h
+  rw [hBuilder]
+  exact (accessListHashOf_eq_ok hHash hFork).2
+
 /-! ## The transition -/
+
+/-- The body of a block runs on its chain exactly when each of its steps succeeds.
+
+The recent hashes give the environment, and the body runs on the state of the chain.
+
+The roots come from the output and the state after it. -/
+theorem runBody_eq_ok {chain : BlockChain} {block : Block fork Transaction}
+    {result : BodyResult fork} :
+    runBody chain block = .ok result ↔ ∃ hashes,
+      recentHashes chain.recent = .ok hashes ∧
+      applyBody chain.config (blockEnvironment chain.config hashes block.header) block
+        ⟨chain.state, ∅, ∅, ∅, ∅⟩ = .ok result.output ∧
+      outputRoots block.transactions block.withdrawals result.output
+        result.output.block.applyChanges = .ok result.roots := by
+  constructor
+  · intro h
+    unfold runBody at h
+    obtain ⟨hashes, hHashes, h⟩ := bind_ok_iff.mp h
+    obtain ⟨output, hOutput, h⟩ := bind_ok_iff.mp h
+    obtain ⟨roots, hRoots, h⟩ := bind_ok_iff.mp h
+    cases h
+    exact ⟨hashes, hHashes, hOutput, hRoots⟩
+  · rintro ⟨hashes, hHashes, hOutput, hRoots⟩
+    simp only [runBody, hHashes, hOutput, hRoots, bind, Except.bind, pure, Except.pure]
 
 /-- From Hegotá, the transition fails, since the rules of that fork are not here yet. -/
 theorem stateTransition_of_hegota_le {chain : BlockChain} {block : Block fork Transaction}
@@ -227,6 +453,86 @@ theorem stateTransition_of_hegota_le {chain : BlockChain} {block : Block fork Tr
   simp only [stateTransition, h, ↓reduceIte]
   rfl
 
+/-- A block that passes the transition takes each step of it, in order.
+
+Its fork is before Hegotá and is the active fork of its chain, and it passes its own checks.
+
+Its body runs on the state after its parent, in the environment of the recent hashes.
+
+The roots of the output pass the checks against the header.
+
+The state after the block is the state that the body gives. -/
+theorem stateTransition_eq_ok {chain : BlockChain} {block : Block fork Transaction}
+    {checkSeal : Bool} {post : State} (h : stateTransition chain block checkSeal = .ok post) :
+    ¬.hegota ≤ fork ∧
+      chain.config.activeFork block.header.number block.header.timestamp.toNat = some fork ∧
+      checkBlock chain.config checkSeal chain.recent block = .ok () ∧
+      ∃ hashes output roots,
+        recentHashes chain.recent = .ok hashes ∧
+        applyBody chain.config (blockEnvironment chain.config hashes block.header) block
+          ⟨chain.state, ∅, ∅, ∅, ∅⟩ = .ok output ∧
+        outputRoots block.transactions block.withdrawals output output.block.applyChanges =
+          .ok roots ∧
+        firstFailure (outputChecks block.header output roots) = .ok () ∧
+        post = output.block.applyChanges := by
+  unfold stateTransition at h
+  have hNotHegota : ¬.hegota ≤ fork := fun hH => by
+    simp [hH, throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h
+  simp only [hNotHegota, ↓reduceIte] at h
+  split at h
+  · rename_i hActive
+    obtain ⟨_, hCheck, h⟩ := bind_ok_iff.mp h
+    obtain ⟨result, hResult, h⟩ := bind_ok_iff.mp h
+    obtain ⟨_, hChecks, h⟩ := bind_ok_iff.mp h
+    cases h
+    obtain ⟨hashes, hHashes, hOutput, hRoots⟩ := runBody_eq_ok.mp hResult
+    exact ⟨hNotHegota, hActive, hCheck, hashes, result.output, result.roots, hHashes, hOutput,
+      hRoots, hChecks, rfl⟩
+  · simp [throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h
+
+/-- A block passes the transition when each of its steps succeeds.
+
+Its fork is before Hegotá and is the active fork of its chain, and it passes its own checks.
+
+Its body runs on its chain, and the roots of the output pass the checks against the header.
+
+The state after the block is the state that the body gives. -/
+theorem stateTransition_of_runBody {chain : BlockChain} {block : Block fork Transaction}
+    {checkSeal : Bool} {result : BodyResult fork} (hFork : ¬.hegota ≤ fork)
+    (hActive :
+      chain.config.activeFork block.header.number block.header.timestamp.toNat = some fork)
+    (hCheck : checkBlock chain.config checkSeal chain.recent block = .ok ())
+    (hBody : runBody chain block = .ok result)
+    (hChecks : firstFailure (outputChecks block.header result.output result.roots) = .ok ()) :
+    stateTransition chain block checkSeal = .ok result.post := by
+  simp only [stateTransition, hFork, hActive, ↓reduceIte, hCheck, hBody, hChecks, bind,
+    Except.bind, pure, Except.pure]
+
+/-- A block that passes its checks has a parent, the last recent block.
+
+The fork of the parent is at most the fork of the block. -/
+theorem checkBlock_parent {config : ChainConfig} {checkSeal : Bool} {recent : List RecentBlock}
+    {block : Block fork Transaction} (h : checkBlock config checkSeal recent block = .ok ()) :
+    ∃ parent, recent.getLast? = some parent ∧ parent.fork ≤ fork := by
+  unfold checkBlock at h
+  obtain ⟨_, _, h⟩ := bind_ok_iff.mp h
+  obtain ⟨_, _, h⟩ := bind_ok_iff.mp h
+  split at h
+  · rename_i parent hp
+    refine ⟨parent, hp, ?_⟩
+    by_cases hle : parent.fork ≤ fork
+    · exact hle
+    · simp [hle, throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h
+  · simp [throw, throwThe, MonadExceptOf.throw] at h
+
+/-- A block that passes its transition has a parent, the last recent block of its chain.
+
+The fork of the parent is at most the fork of the block. -/
+theorem stateTransition_parent {chain : BlockChain} {block : Block fork Transaction}
+    {checkSeal : Bool} {post : State} (h : stateTransition chain block checkSeal = .ok post) :
+    ∃ parent, chain.recent.getLast? = some parent ∧ parent.fork ≤ fork :=
+  checkBlock_parent (stateTransition_eq_ok h).2.2.1
+
 /-- A block that passes the transition is at the active fork of its chain.
 
 Its header commits to the state after it. -/
@@ -234,22 +540,9 @@ theorem of_stateTransition {chain : BlockChain} {block : Block fork Transaction}
     {checkSeal : Bool} {post : State} (h : stateTransition chain block checkSeal = .ok post) :
     chain.config.activeFork block.header.number block.header.timestamp.toNat = some fork ∧
       stateRoot keccak256 post = .ok block.header.stateRoot := by
-  unfold stateTransition at h
-  by_cases hFork : .hegota ≤ fork
-  · simp [hFork, throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h
-  · simp only [hFork, ↓reduceIte] at h
-    split at h
-    · rename_i hActive
-      obtain ⟨_, _, h⟩ := bind_ok_iff.mp h
-      obtain ⟨_, _, h⟩ := bind_ok_iff.mp h
-      obtain ⟨output, _, h⟩ := bind_ok_iff.mp h
-      obtain ⟨roots, hRoots, h⟩ := bind_ok_iff.mp h
-      obtain ⟨_, hChecks, h⟩ := bind_ok_iff.mp h
-      cases h
-      have hState := (of_outputChecks hChecks).2.1
-      refine ⟨hActive, ?_⟩
-      rw [← hState]
-      exact outputRoots_state hRoots
-    · simp [throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h
+  obtain ⟨-, hActive, -, _, output, roots, -, -, hRoots, hChecks, rfl⟩ := stateTransition_eq_ok h
+  refine ⟨hActive, ?_⟩
+  rw [← (of_outputChecks hChecks).2.1]
+  exact outputRoots_state hRoots
 
 end EthLib.Execution.Blocks

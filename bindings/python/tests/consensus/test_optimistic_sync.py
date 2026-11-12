@@ -1,10 +1,14 @@
-"""The optimistic sync of Bellatrix against blocks built in the test."""
+"""The optimistic sync of Bellatrix and Gloas against blocks built in the test or from vectors."""
 
 import struct
+from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
+from ruamel.yaml import YAML
 
 from ethlib import consensus
+from ethlib.networking import snappy
 from raising import raises
 
 ERROR = consensus.ForkChoiceError
@@ -144,6 +148,152 @@ def test_transitions_rejected():
     assert info.value.code == 2
 
 
+# A Gloas block of the minimal preset, from the consensus-specs vectors of tests/sources.toml.
+GLOAS_FORK = "glamsterdam"
+GLOAS_ANCHOR = snappy.decompress(
+    (
+        Path(__file__).resolve().parents[4]
+        / "tests/consensus/fork_choice/minimal/gloas/fork_choice/on_block/pyspec_tests"
+        / "on_block_parent_full_accepts_verified_payload/anchor_block.ssz_snappy"
+    ).read_bytes()
+)
+
+# The Gloas body of the minimal preset: where the offset of the signed bid sits in its fixed part.
+# Before it come the randao reveal, the eth1 data, the graffiti and five offsets.
+# Then the sync aggregate of 4 + 96 bytes for 32 members, and the offset of the credential changes.
+BID_OFFSET = 96 + 72 + 32 + 5 * 4 + 4 + 96 + 4
+# A signed bid starts with the offset of its message and the signature.
+BID_MESSAGE = 4 + 96
+
+
+def gloas_block(slot: int, parent: bytes, parent_hash: int, block_hash: int) -> bytes:
+    """A minimal Gloas block of a slot on a parent, whose bid names two block hashes."""
+    data = bytearray(GLOAS_ANCHOR)
+    data[0:8] = struct.pack("<Q", slot)
+    data[16:48] = parent
+    body = struct.unpack_from("<I", data, 8 + 8 + 32 + 32)[0]
+    bid = body + struct.unpack_from("<I", data, body + BID_OFFSET)[0] + BID_MESSAGE
+    assert struct.unpack_from("<I", data, bid - BID_MESSAGE)[0] == BID_MESSAGE
+    # The bid holds the parent block hash, the parent block root, then the block hash.
+    # Its other fields keep the values of the anchor, which no rule under test reads.
+    data[bid : bid + 32] = bytes([parent_hash]) * 32
+    data[bid + 64 : bid + 96] = bytes([block_hash]) * 32
+    return bytes(data)
+
+
+def gloas_root(data: bytes) -> bytes:
+    """The root of a minimal Gloas block, which also checks that the bytes decode."""
+    found, again = consensus.ssz_static("minimal", GLOAS_FORK, "BeaconBlock", data)
+    assert again == data
+    return found
+
+
+# The block g names hash 1; a builds on its payload, and names hash 2.
+# Then b builds on a without its payload, so on hash 1, and c builds on the payload of b.
+# The block z names the zero hash; the late candidates below build on it.
+GLOAS_G = gloas_block(1, ZERO, 0, 1)
+GLOAS_A = gloas_block(2, gloas_root(GLOAS_G), 1, 2)
+GLOAS_B = gloas_block(3, gloas_root(GLOAS_A), 1, 3)
+GLOAS_C = gloas_block(4, gloas_root(GLOAS_B), 3, 4)
+GLOAS_Z = gloas_block(1, ZERO, 0, 0)
+GLOAS_BLOCKS = [GLOAS_G, GLOAS_A, GLOAS_B, GLOAS_C, GLOAS_Z]
+GG, GA, GB, GC, GZ = (gloas_root(x) for x in GLOAS_BLOCKS)
+
+
+def test_gloas_execution_block():
+    assert consensus.is_execution_block("minimal", GLOAS_FORK, GLOAS_G)
+    assert not consensus.is_execution_block("minimal", GLOAS_FORK, GLOAS_Z)
+
+
+@pytest.mark.parametrize(
+    ("current_slot", "candidate", "expected"),
+    [
+        # The bid of the parent names a payload, so the block is a candidate at once.
+        (2, gloas_block(2, GG, 1, 5), True),
+        # The bid of the parent names the zero hash: the block waits 128 slots.
+        (2 + 127, gloas_block(2, GZ, 0, 5), False),
+        (2 + 128, gloas_block(2, GZ, 0, 5), True),
+    ],
+    ids=["parent payload", "too early", "far enough"],
+)
+def test_gloas_optimistic_candidate(current_slot: int, candidate: bytes, expected: bool):
+    got = consensus.is_optimistic_candidate_block(
+        "minimal", GLOAS_FORK, GLOAS_BLOCKS, current_slot, candidate
+    )
+    assert got is expected
+
+
+@pytest.mark.parametrize(
+    ("valid", "expected"),
+    [
+        # The payload of c builds on those of b and g, and not on the payload of a.
+        (GC, [GA]),
+        (GB, [GA, GC]),
+        (GA, [GB, GC]),
+    ],
+    ids=["c", "b", "a"],
+)
+def test_gloas_valid_payload(valid: bytes, expected: list[bytes]):
+    optimistic = [GG, GA, GB, GC]
+    got = consensus.on_valid_payload("minimal", GLOAS_FORK, GLOAS_BLOCKS, optimistic, valid)
+    assert got == expected
+
+
+@pytest.mark.parametrize(
+    ("first", "expected"),
+    [
+        # The blocks b and c descend from a, but their payloads do not build on its payload.
+        (GA, [GG, GB, GC]),
+        (GB, [GG, GA]),
+        (GG, []),
+    ],
+    ids=["a", "b", "g"],
+)
+def test_gloas_invalidated_payload(first: bytes, expected: list[bytes]):
+    optimistic = [GG, GA, GB, GC]
+    got = consensus.on_invalidated_payload("minimal", GLOAS_FORK, GLOAS_BLOCKS, optimistic, first)
+    assert got == expected
+
+
+# The status of the payload of a block in the node, by its code.
+EMPTY, FULL, PENDING = 0, 1, 2
+
+
+@pytest.mark.parametrize(
+    ("optimistic", "status", "expected"),
+    [
+        # The payload chain of c holds c, b and g, and not a; a full node holds all three payloads.
+        ([GB, GC], FULL, GG),
+        ([GA, GC], FULL, GB),
+        ([GA], FULL, GC),
+        # An empty or pending node holds only the payloads of b and g, so c is never the answer.
+        ([GA], EMPTY, GB),
+        ([GB], EMPTY, GG),
+        ([], PENDING, GB),
+    ],
+    ids=["two optimistic", "a skipped", "verified", "empty", "empty parent", "pending"],
+)
+def test_gloas_latest_verified_ancestor(optimistic: list[bytes], status: int, expected: bytes):
+    got = consensus.latest_verified_ancestor(
+        "minimal", GLOAS_FORK, GLOAS_BLOCKS, optimistic, GC, payload_status=status
+    )
+    assert got == expected
+
+
+@pytest.mark.parametrize(
+    ("optimistic", "start", "status"),
+    [([GG, GB, GC], GC, FULL), ([GB, GG], GC, EMPTY), ([], GG, EMPTY)],
+    ids=["all optimistic", "held all optimistic", "nothing held"],
+)
+def test_gloas_no_verified_ancestor(optimistic: list[bytes], start: bytes, status: int):
+    # Every payload that the node holds is optimistic, or it holds none.
+    with raises(ERROR, "optimistic sync failed with code 39") as info:
+        consensus.latest_verified_ancestor(
+            "minimal", GLOAS_FORK, GLOAS_BLOCKS, optimistic, start, payload_status=status
+        )
+    assert info.value.code == 39
+
+
 RESTRICTED = [0, 1, 5, 6, 7, 8, 9]
 
 
@@ -159,6 +309,86 @@ def test_restricted_domain_of_another_length():
     assert info.value.code == 0
 
 
+# A case of the consensus-specs optimistic sync vectors, pinned in tests/sources.toml.
+SYNC_CASE = (
+    Path(__file__).resolve().parents[4]
+    / "tests/consensus/fork_choice/minimal/bellatrix/sync/optimistic/pyspec_tests"
+    / "from_syncing_to_invalid"
+)
+
+
+def _case_file(name: str) -> bytes:
+    """The SSZ bytes of a file of the case, without the Snappy framing."""
+    return snappy.decompress((SYNC_CASE / f"{name}.ssz_snappy").read_bytes())
+
+
+def _case_steps() -> list[consensus.ForkChoiceStep]:
+    """The ticks, blocks and payload verdicts of the case, as fork choice steps."""
+    steps: list[consensus.ForkChoiceStep] = []
+    for step in YAML(typ="safe").load((SYNC_CASE / "steps.yaml").read_text()):
+        if "tick" in step:
+            steps.append(("tick", step["tick"]))
+        elif "block" in step:
+            steps.append(("block", _case_file(step["block"])))
+        elif "payload_status" in step:
+            status = step["payload_status"]
+            latest = status["latest_valid_hash"]
+            steps.append(("payload", (status["status"], latest and bytes.fromhex(latest[2:]))))
+        elif "checks" not in step:
+            raise ValueError(f"no runner for the step {step}")
+    return steps
+
+
+def _signed(block: bytes) -> bytes:
+    """A signed block in SSZ: the offset of the block, a zero signature, then the block."""
+    return struct.pack("<I", 4 + 96) + bytes(96) + block
+
+
+def _optimistic_node(
+    steps: Sequence[consensus.ForkChoiceStep], roots: list[bytes], head: bytes
+) -> bool:
+    """Whether the node of the case is optimistic after the steps."""
+    anchor_state, anchor_block = _case_file("anchor_state"), _case_file("anchor_block")
+    return consensus.is_optimistic_node(
+        "minimal", FORK, anchor_state, anchor_block, steps, roots, head, verify=False
+    )
+
+
+# A head root of the node; only its membership in the optimistic roots matters.
+HEAD = bytes([1]) * 32
+
+
+def test_optimistic_head_makes_an_optimistic_node():
+    assert _optimistic_node([], [HEAD], HEAD) is True
+    assert _optimistic_node(_case_steps(), [HEAD], HEAD) is True
+
+
+def test_viable_branch_left():
+    # After the case, the invalid blocks left the store and a valid branch remains.
+    assert _optimistic_node(_case_steps(), [], ZERO) is False
+    assert _optimistic_node([], [HEAD], ZERO) is False
+
+
+def test_nothing_invalidated():
+    # Without an invalid verdict, no block was dropped, so the second case cannot hold.
+    steps = [step for step in _case_steps() if step[0] != "payload"]
+    assert _optimistic_node(steps, [], ZERO) is False
+
+
+def test_no_viable_branch_once_the_justified_block_is_invalid():
+    # A verdict without a latest valid hash drops the anchor, which is the justified block.
+    # Every descendant goes with it, so no branch is left.
+    # No vector empties the tree while the justified block stays.
+    # The theorem on the filtered tree covers that way.
+    anchor = _signed(_case_file("anchor_block"))
+    steps: list[consensus.ForkChoiceStep] = [
+        *_case_steps(),
+        ("payload", ("INVALID", None)),
+        ("block", anchor),
+    ]
+    assert _optimistic_node(steps, [], ZERO) is True
+
+
 _EXPORTS = [
     lambda fork, data: consensus.is_execution_block("mainnet", fork, data),
     lambda fork, data: consensus.is_optimistic_candidate_block("mainnet", fork, [data], 0, data),
@@ -170,10 +400,127 @@ _IDS = ["execution", "candidate", "ancestor", "valid", "invalidated"]
 
 
 @pytest.mark.parametrize("call", _EXPORTS, ids=_IDS)
-@pytest.mark.parametrize("fork", ["phase0", "altair", "glamsterdam"])
-def test_no_optimistic_sync_outside_bellatrix_to_fulu(call, fork: str):
+@pytest.mark.parametrize("fork", ["phase0", "altair"])
+def test_no_optimistic_sync_before_bellatrix(call, fork: str):
     with raises(ERROR, f"no optimistic sync at {fork}") as info:
         call(fork, G)
+    assert info.value.code == 0
+
+
+@pytest.mark.parametrize("fork", ["phase0", "altair"])
+def test_no_optimistic_node_before_bellatrix(fork: str):
+    with raises(ERROR, f"no optimistic sync at {fork}") as info:
+        consensus.is_optimistic_node("minimal", fork, b"", b"", [], [], ZERO)
+    assert info.value.code == 0
+
+
+# A Gloas case of the consensus-specs vectors, pinned in tests/sources.toml.
+# Its block 1 has its payload imported, and block 2 builds on that payload.
+GLOAS_CASE = (
+    Path(__file__).resolve().parents[4]
+    / "tests/consensus/fork_choice/minimal/gloas/fork_choice/on_block/pyspec_tests"
+    / "on_block_parent_full_accepts_verified_payload"
+)
+BLOCK_1 = bytes.fromhex("29874e204fad82a30293db7910390d39dc70d4e7c5a7302cfbc10a1b8f17dcf4")
+BLOCK_2 = bytes.fromhex("68066a5504528f3329d4ee97b17219501b21c1cdec09843ee5b5357eff6b8054")
+
+
+def _pinned_file(name: str, case: Path = GLOAS_CASE) -> bytes:
+    """The SSZ bytes of a file of a pinned case, without the Snappy framing."""
+    return snappy.decompress((case / f"{name}.ssz_snappy").read_bytes())
+
+
+def _pinned_steps(case: Path = GLOAS_CASE) -> list[consensus.ForkChoiceStep]:
+    """The ticks, blocks and payloads of a pinned case, as fork choice steps."""
+    steps: list[consensus.ForkChoiceStep] = []
+    for step in YAML(typ="safe").load((case / "steps.yaml").read_text()):
+        if "tick" in step:
+            steps.append(("tick", step["tick"]))
+        elif "block" in step:
+            steps.append(("block", _pinned_file(step["block"], case)))
+        elif "execution_payload" in step:
+            steps.append(("execution_payload", _pinned_file(step["execution_payload"], case)))
+        elif "checks" not in step:
+            raise ValueError(f"no runner for the step {step}")
+    return steps
+
+
+def _gloas_optimistic_node(roots: list[bytes], status: int, head: bytes = BLOCK_2) -> bool:
+    """Whether the node of the Gloas case is optimistic, with block 2 as its head by default."""
+    return consensus.is_optimistic_node(
+        "minimal",
+        GLOAS_FORK,
+        _pinned_file("anchor_state"),
+        _pinned_file("anchor_block"),
+        _pinned_steps(),
+        roots,
+        head,
+        verify=False,
+        head_payload_status=status,
+    )
+
+
+@pytest.mark.parametrize(
+    ("roots", "status"),
+    [
+        # A full head reads the payload of its block.
+        ([BLOCK_2], FULL),
+        # An empty head reads the payload that its block builds on, that of block 1.
+        ([BLOCK_1], EMPTY),
+        # A pending head reads both.
+        ([BLOCK_2], PENDING),
+        ([BLOCK_1], PENDING),
+    ],
+    ids=["full", "empty", "pending own", "pending parent"],
+)
+def test_gloas_optimistic_head(roots: list[bytes], status: int):
+    assert _gloas_optimistic_node(roots, status) is True
+
+
+@pytest.mark.parametrize(
+    ("roots", "status"),
+    [([BLOCK_1], FULL), ([BLOCK_2], EMPTY), ([], PENDING)],
+    ids=["full", "empty", "pending"],
+)
+def test_gloas_head_not_optimistic(roots: list[bytes], status: int):
+    # The second case of an optimistic node is not yet specified from Gloas.
+    with raises(ERROR, "optimistic sync failed with code 24") as info:
+        _gloas_optimistic_node(roots, status)
+    assert info.value.code == 24
+
+
+# The anchor builds on a payload that the store does not hold.
+GLOAS_ANCHOR_ROOT = gloas_root(_pinned_file("anchor_block"))
+
+
+@pytest.mark.parametrize("status", [EMPTY, PENDING], ids=["empty", "pending"])
+def test_gloas_head_on_a_payload_the_store_lacks(status: int):
+    # Without its own optimistic payload, the head cannot be judged.
+    with raises(ERROR, "optimistic sync failed with code 39") as info:
+        _gloas_optimistic_node([], status, GLOAS_ANCHOR_ROOT)
+    assert info.value.code == 39
+
+
+def test_gloas_pending_head_reads_its_own_payload_first():
+    # Its own optimistic payload settles it before the missing one is read.
+    assert _gloas_optimistic_node([GLOAS_ANCHOR_ROOT], PENDING, GLOAS_ANCHOR_ROOT) is True
+
+
+def test_unknown_head_payload_status():
+    with raises(ERROR, "unknown payload status 3") as info:
+        _gloas_optimistic_node([], 3)
+    assert info.value.code == 0
+    with raises(ERROR, "unknown payload status 3") as info:
+        consensus.latest_verified_ancestor(
+            "minimal", GLOAS_FORK, GLOAS_BLOCKS, [], GC, payload_status=3
+        )
+    assert info.value.code == 0
+
+
+def test_optimistic_node_head_of_another_length():
+    anchor_state, anchor_block = _case_file("anchor_state"), _case_file("anchor_block")
+    with raises(ERROR, "expected 32 bytes, got 31") as info:
+        consensus.is_optimistic_node("minimal", FORK, anchor_state, anchor_block, [], [], bytes(31))
     assert info.value.code == 0
 
 
@@ -196,3 +543,88 @@ def test_roots_of_another_length():
 def test_roots_must_be_bytes():
     with raises(TypeError, "cannot pass a value of type bytearray to Lean"):
         consensus.on_valid_payload("mainnet", FORK, BLOCKS, [bytearray(RA)], RA)  # ty: ignore[invalid-argument-type]
+
+
+# The same case at Heze, pinned in tests/sources.toml: only block 1 has its payload imported.
+HEZE_CASE = (
+    Path(__file__).resolve().parents[4]
+    / "tests/consensus/fork_choice/minimal/heze/fork_choice/on_block/pyspec_tests"
+    / "on_block_parent_full_accepts_verified_payload"
+)
+HEZE_FORK = "hegota"
+HEZE_ANCHOR = bytes.fromhex("d7f0e221095c825ae64f6498843aeaffc47921a3cdb00562f6239ae5662c1c36")
+HEZE_BLOCK_1 = bytes.fromhex("67fe41cbe723d01b8e1dd2e0e7a20b8f2e4e0f3210c831854e46c333c61c2e3a")
+HEZE_BLOCK_2 = bytes.fromhex("c26cf871349a93b1968126b51a88d909bc8287a46d078d22b81300ce984951e3")
+VALID, INVALIDATED, NOT_VALIDATED = 0, 1, 2
+
+
+def _satisfaction(
+    status: int, satisfied: bool, validated_root: bytes | None = None, fork: str = HEZE_FORK
+) -> list[bool | None]:
+    """The answers for the anchor, the two blocks and an unknown root after the Heze case."""
+    return consensus.inclusion_list_satisfaction(
+        "minimal",
+        fork,
+        _pinned_file("anchor_state", HEZE_CASE),
+        _pinned_file("anchor_block", HEZE_CASE),
+        _pinned_steps(HEZE_CASE),
+        status,
+        satisfied,
+        [HEZE_ANCHOR, HEZE_BLOCK_1, HEZE_BLOCK_2, ZERO],
+        validated_root=validated_root,
+        verify=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "satisfied", "expected"),
+    [
+        # A payload not yet validated satisfies its lists, whatever the execution layer says.
+        (NOT_VALIDATED, False, True),
+        (NOT_VALIDATED, True, True),
+        # A valid payload has the answer of the execution layer.
+        (VALID, True, True),
+        (VALID, False, False),
+    ],
+    ids=["not validated", "not validated, satisfied", "valid", "valid, unsatisfied"],
+)
+def test_inclusion_list_satisfaction_by_status(status: int, satisfied: bool, expected: bool):
+    # Only the block whose payload the store keeps has an answer.
+    assert _satisfaction(status, satisfied) == [None, expected, None, None]
+
+
+def test_inclusion_list_satisfaction_of_invalidated_payload():
+    # The execution layer rejects the payload, so the store keeps no envelope and no answer.
+    assert _satisfaction(INVALIDATED, True) == [None, None, None, None]
+
+
+def test_inclusion_list_satisfaction_of_unknown_status():
+    with raises(ERROR, "unknown payload validation status 3") as info:
+        _satisfaction(3, True)
+    assert info.value.code == 0
+
+
+@pytest.mark.parametrize("satisfied", [False, True], ids=["unsatisfied", "satisfied"])
+def test_inclusion_list_satisfaction_once_valid(satisfied: bool):
+    # The payload was kept before it was validated, then turns valid.
+    # Its block takes the answer of the execution layer; the other answers stay.
+    # No pinned Heze case keeps two payloads, so a theorem covers a neighbour with an answer.
+    assert _satisfaction(NOT_VALIDATED, satisfied, HEZE_BLOCK_1) == [None, satisfied, None, None]
+
+
+@pytest.mark.parametrize(
+    ("status", "root"),
+    [(NOT_VALIDATED, HEZE_BLOCK_2), (VALID, HEZE_BLOCK_1)],
+    ids=["no payload", "already valid"],
+)
+def test_inclusion_list_satisfaction_once_valid_of_payload_not_optimistic(status: int, root: bytes):
+    # Only a payload kept before it was validated can move from not validated to valid.
+    with raises(ERROR, "optimistic sync failed with code 52") as info:
+        _satisfaction(status, True, root)
+    assert info.value.code == 52
+
+
+def test_no_inclusion_list_satisfaction_before_heze():
+    with raises(ERROR, "no inclusion lists at glamsterdam") as info:
+        _satisfaction(NOT_VALIDATED, True, fork=GLOAS_FORK)
+    assert info.value.code == 0

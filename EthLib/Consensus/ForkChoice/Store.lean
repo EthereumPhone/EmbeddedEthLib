@@ -69,6 +69,10 @@ structure ForkChoiceNode where
   payloadStatus : PayloadStatus := .pending
   deriving DecidableEq, Repr, Inhabited
 
+/-- The order of nodes by root as bytes, then by the number of the payload status. -/
+def ForkChoiceNode.compare (a b : ForkChoiceNode) : Ordering :=
+  (Ord.compare a.root b.root).then (Ord.compare a.payloadStatus.code b.payloadStatus.code)
+
 /-- The latest vote of a validator: when it votes and the root of the block it votes for.
 
 Before Gloas the vote has its target epoch.
@@ -216,6 +220,10 @@ inductive ForkChoiceError where
   | notInInclusionListCommittee (index : ValidatorIndex)
   /-- From Heze: the signature of an inclusion list does not verify. -/
   | invalidInclusionListSignature
+  /-- From Heze: the payload of the block with the root is not optimistic. -/
+  | payloadNotOptimistic (root : Root)
+  /-- The discount of the block with the root exceeds the committee weight since its parent. -/
+  | supportDiscountAboveMaximum (root : Root)
   deriving Repr
 
 /-- The stable code of an error, one per constructor, for the C exports.
@@ -275,6 +283,8 @@ def ForkChoiceError.code : ForkChoiceError → UInt32
   | .notPossibleDependentBlock _ => 49
   | .notInInclusionListCommittee _ => 50
   | .invalidInclusionListSignature => 51
+  | .payloadNotOptimistic _ => 52
+  | .supportDiscountAboveMaximum _ => 53
 
 variable (preset : Preset) (fork : Fork)
 
@@ -320,7 +330,7 @@ structure Store where
     Since .glamsterdam fork (Std.TreeMap Root (Vector (Option Bool) preset.PTC_SIZE.toNat))
   /-- From Heze: the inclusion lists that the node has received. -/
   inclusionLists : Since .hegota fork InclusionListStore
-  /-- From Heze: whether the payload of each block satisfied the inclusion lists of its slot.
+  /-- From Heze: whether the payload of each block satisfied the inclusion lists of the slot before.
 
   A verified payload of Heze has its answer recorded. -/
   payloadInclusionListSatisfaction : Since .hegota fork (Std.TreeMap Root Bool)

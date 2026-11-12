@@ -9,6 +9,265 @@ Not yet released.
 
 ### Changes that break callers
 
+- In Lean, the gossip message ID has its length in its type.
+  `Gossip.messageId` returns `Vector UInt8 20` in place of a `ByteArray`.
+  A caller that needs a `ByteArray` takes `Base.packBytes (messageId fork topic data)`.
+  `messageId_size` is removed, since the type states the length.
+  `messageId_of_ok` and `messageId_of_error` state the ID as `(Sha256.hash32 input).take 20`.
+  The new `packBytes_messageId_of_ok` and `packBytes_messageId_of_error` state their former equations, through `Base.packBytes`.
+  The C export `eth_gossip_message_id` and the Python `gossip.message_id` are unchanged.
+
+- Slashing-protection imports use EIP-3076's minimal strategy ([#1963](https://github.com/ethereum/EthLib/issues/1963)).
+  Import compacts both the held record and the file: each key keeps its greatest block slot and its greatest source and target epochs, taken independently, without signing roots.
+  So a repeat of any message held before the import is refused, and so is a block at or before the slot limit, or a vote with a source before the source limit or a target at or before the target limit.
+  The keys of the record come out in byte order.
+  The JSON format and the C and Python signatures are unchanged.
+
+- The cumulative churn bounds also hold for idle queues ([#1451](https://github.com/ethereum/EthLib/issues/1451)).
+  In Lean, `churnQueue_foldlM_le` drops its `first` argument, and `computeExitEpochAndUpdateChurn_foldlM_le` and `computeConsolidationEpochAndUpdateChurn_foldlM_le` drop their `open_` argument.
+  Callers remove that argument.
+  The exact `_spend` equalities keep it.
+- A req/resp payload now fails when bytes follow the chunk that completes its declared length.
+  A reader must reject any bytes that remain after it has read the declared number of SSZ bytes.
+  The decoder read the whole Snappy stream.
+  So it accepted chunks after the one that completes the length, if they add no bytes: padding, reserved skippable chunks, a second stream identifier or an empty data chunk.
+  With a declared length of 0, the reader now reads the stream identifier alone, so any chunk after it fails too.
+  `reqresp.decode_payload` and `reqresp.decode_response_chunk` raise `ReqRespError` with the message "N bytes follow the last chunk of the payload", and the C exports return the new error code 10.
+  In Lean, `decodePayload` reads the stream with the new `Snappy.readFrames`, which stops at the chunk that completes the declared length and returns the bytes after it.
+  `Snappy.readChunks` is its chunk loop, and the new module `Networking.Proofs.Snappy.Read` proves their properties.
+  `ReqRespError` gains the constructor `trailingBytes`.
+  The last conjunct of `decodePayload_ok` and `decodePayload_eq_ok_iff` is now `Snappy.readFrames … = .ok (d.data.toList, [])` in place of `Snappy.decodeFrames … = .ok d`.
+  `decodeFramesList_of_readFrames` gives the list form of the old conjunct, and the new `decodePayload_append_ne_ok` proves that bytes appended to a payload that decodes make it fail.
+- The leanXMSS signing lemmas over a map of monads now derive, from the monad laws, that the map keeps `map` ([#1385](https://github.com/ethereum/EthLib/issues/1385#issuecomment-6722640861)).
+  `findCodeword_map_monad`, `otsSign_map_monad`, `signLayer_map_monad` and `signDerived_map_monad` require `LawfulMonad` instances for both monads instead of an explicit `map_map` argument.
+  Drop that argument at each call.
+  `Sphincs.Unforgeability.map_monad_map` moves to `HashSig.map_monad_map`, so leanXMSS and leanSPHINCS share one proof that such a map keeps `map`.
+- From Gloas, the discount for empty slots of the fast confirmation rule also counts the votes for the pending node of the parent ([#1368](https://github.com/ethereum/EthLib/issues/1368), [#1458](https://github.com/ethereum/EthLib/issues/1458)).
+  A parent has three nodes from Gloas: a pending one, and a full and an empty one for the two answers on its payload.
+  The discount counted only the votes for the full or the empty node that the block builds on.
+  It counts the votes for that node and for the pending node, and the votes for the other of the two stay out.
+  A vote cast in the slot of the block it names supports the pending node of that block.
+  A member of the committees of the empty slots can hold such a vote for the parent, and the discount missed it.
+  Before Gloas the parent has only its pending node, and the discount keeps its value.
+  No signature of a C export or Python function changes.
+  From Gloas the threshold can be lower, so a `fast_confirmation` step of `fork_choice` can confirm a block sooner.
+  In Lean, `Store.getNodeSupportBetweenSlots` takes a list of nodes in place of a node, and counts a vote for any of them.
+  `getNodeSupportBetweenSlots_le` takes that list too.
+- The block supply bound and the Glamsterdam equality now follow from the exact block supply equation ([#1902](https://github.com/ethereum/EthLib/issues/1902)).
+  No C export or Python function changes.
+  In Lean, `supply_systemCall`, `supply_systemCall_join`, `supply_startSystemCalls`, `supply_blockRequests` and `applyTransactions_supply` are gone from `EthLib.Execution.Proofs.Blocks.Supply`.
+  The new `SystemCallBurns.total_eq_zero_of_glamsterdam`, `StartSystemCallsBurns.total_eq_zero_of_glamsterdam`, `TransactionsBurns.total_eq_zero_of_glamsterdam`, `RequestsBurns.total_eq_zero_of_glamsterdam`, `BlockRequestsBurns.total_eq_zero_of_glamsterdam` and `BodyBurns.total_eq_zero_of_glamsterdam` in `EthLib.Execution.Proofs.Blocks.Burn` prove that the certified losses are 0 from Glamsterdam.
+  `withdrawnWei`, `rewardWei`, `createdWei`, `burnedWei` and the supply lemmas of the DAO transfer, the withdrawals and the rewards move to `EthLib.Execution.Proofs.Blocks.Burn`, with the same names.
+  `EthLib.Execution.Proofs.Blocks.Burn` no longer imports `EthLib.Execution.Proofs.Blocks.Supply`, so import the latter for `headerBurnedWei`, the `applyBody_supply` theorems and the `stateTransition_supply` bounds.
+- From Gloas, the rewards and penalties and the inactivity updates of an epoch now fail where a registry position of 2^64 or more would become a validator index ([#1883](https://github.com/ethereum/EthLib/issues/1883)).
+  The specification builds a `ValidatorIndex` for each position when it applies the deltas, and for each eligible validator when it lists the eligible indices.
+  EthLib took such a position modulo 2^64, so it credited the balance, or updated the inactivity score, of another validator.
+  Before Gloas the registry stays within its limit, which is below 2^64, so nothing changes there.
+  No C export or Python function changes.
+  In Lean, `applyDeltas_eq_ok_iff` now reads the balance at the position itself, not at the position modulo 2^64, and adds the condition that the position is below 2^64.
+  `applyAllDeltas_balances`, `foldlM_applyAllDeltas_balances` and `processRewardsAndPenalties_balances_of_altair` no longer take a bound on the size of the registry.
+- The FFG chain theorems now derive that the block of each justified checkpoint is in the chain of the block of its recent epoch from the order of the roots at consecutive slots, instead of assuming it ([#1420](https://github.com/ethereum/EthLib/issues/1420)).
+  No C export or Python function changes.
+  In Lean, the field `chain` of `SlackStepBounds` becomes `links`, which asks the map from roots to blocks to keep in order the roots of consecutive slots (`rootLinks`).
+  `SlackChainInvariant` gains the field `roots`, a `RootsAbove` fact that the new `FfgRoots.lean` keeps along each chain step.
+  The new `ChainRoot` orders the roots by the links of the states that genesis reaches, and `slackJustifiedCheckpoints_chainRoot_of_chainSteps` uses it, so it asks no order hypothesis.
+  The new `recentJustified` names the justified checkpoint of a recent epoch, and `RootsAbove.le_of_getBlockRoot` gives the order that justification reads; `RootsAbove.of_chainStep`, `RootsAbove.of_initializeBeaconStateFromEth1` and `toChainRoot` are new too.
+  New shared lemmas: `getBlockRootAtSlot_ok_iff`, `getBlockRootAtSlot_exists`, `getBlockRootAtSlot_between` and `getBlockRootAtSlot_congr` (`Accessors.lean`), `advanceSlot_previousJustified`, `processBlock_blockRoots`, `processUpgrades_slot` and `processUpgrades_blockRoots`.
+- From Gloas, the pending deposits of an epoch now fail at every deposit they read to a key whose first validator sits at a registry position of 2^64 or more ([#1883](https://github.com/ethereum/EthLib/issues/1883)).
+  The specification builds a `ValidatorIndex` from that position before it tests the validator, so it fails there.
+  EthLib failed only when it credited such a deposit, and missed the deposit to a validator that exits and is not withdrawn, and the deposit beyond the churn.
+  Before Gloas the registry stays within its limit, which is below 2^64, so nothing changes there.
+  No C export or Python function changes.
+  In Lean, `depositTargetStatus` now returns an `Except AccessorError (Bool × Bool)`.
+  The fields `stops`, `used`, `appliedFilter` and `movedFilter` of `PassPendingDepositsFacts`, and `processPendingDeposits_postponed`, test that result.
+  The new field `statusOk`, and a new conclusion of `processPendingDeposits_postponed`, say that the status of each deposit read succeeds.
+  The new `addValidatorToRegistry_size_lt` says that a new validator joins a registry of fewer than 2^64 validators.
+- The FFG theorems on the beacon chain now take their votes from the attestations that blocks apply, instead of from any data that some signature verifies on ([#1888](https://github.com/ethereum/EthLib/issues/1888)).
+  Under the BLS checks a verifying signature exists for every data that a registered key can sign, so the old votes did not say who voted.
+  No C export or Python function changes.
+  In Lean, `SignedVote`, `TargetFlagsSigned` and `PendingSigned` are gone, with their lemmas, `voteFrame_processOperations` and the two `of_stateTransition` lemmas of the flags and the pending attestations.
+  The new `attestationVotes` and `blockVotes` name the votes that an attestation and a block cast, and `TargetFlagsVoted` and the new `PendingVoted` take a set of such votes.
+  `VoteFrame` drops its configuration, its signature checks and its field `signed`, and `voteFrame_processAttestation` and `voteFrame_processBlock` give the votes of the step by name; the latter takes the preset bound `apart`.
+  The slot and upgrade lemmas of the flags and the pending attestations no longer take a bound on the registry.
+  The link and slack theorems of `FfgJustification.lean` and `FfgSlack.lean` take the vote set and a hypothesis that the votes of the model hold it, with no slot condition.
+  `SlackChainInvariant` drops its configuration, its signature checks and its field `known`, takes the vote set, and uses its votes in the model; `SlackStepHypotheses` replaces `contains` by `applied`, on the new `blockStepVotes`.
+  `runVotes` drops its argument `block` and now holds the beacon votes that the block steps of a run cast, so a caller wraps it in `ffgVotes block`.
+  `ForkVersionsKnown` is gone with its lemmas, and `initializeBeaconStateFromEth1_target` becomes `JustifiedEarly.of_initializeBeaconStateFromEth1`, which gives only the equal justified checkpoints.
+  `TargetFlagAt.of_flagsKeptOrZero` moves to `Upgrade.lean`.
+- The theorem that an attestation keeps the registry and the RANDAO mixes now holds at every fork ([#1888](https://github.com/ethereum/EthLib/issues/1888)).
+  No C export or Python function changes.
+  In Lean, `processAttestation_registry` drops its argument `before : fork < .altair`, so a caller removes it.
+- From Gloas, builder deposits, exits and onboarding, ejections, slashing penalties, attestation committee counts and active-validator reads now fail where a position of 2^64 or more would become a 64-bit index ([#1883](https://github.com/ethereum/EthLib/issues/1883)).
+  Such a position used to wrap modulo 2^64, so the step read or wrote another validator or builder.
+  The registry updates, the slashing penalties, the effective-balance updates and the genesis activations read and write each validator at its plain position, as the specification indexes the registry with a Python integer.
+  No C export or Python function changes.
+  In Lean, `addBuilderToRegistry` now returns an `Except TransitionError`; bind its result, and pass a successful return to `builderBalanceSum_addBuilderToRegistry`.
+  The new `getValidatorAt`, `getBalanceAt` and `BeaconState.setValidatorAt` read and write at a plain position, and `getValidator_eq_getValidatorAt`, `getBalance_eq_getBalanceAt` and `setValidator_eq_setValidatorAt` relate them to the index forms.
+  `EpochFrameLaws` replaces its `setValidator` field by a `setValidatorAt` field, and the theorem `EpochFrameLaws.setValidator` gives the index form; `EpochFrameLaws.setValidatorAt_of_sameBalance`, `frame_setValidatorAt_of_whole`, `activeStep_setValidatorAt` and `sameSizes_setValidatorAt` are new.
+  `KeysKept`, `Frame.keysKept` and `UpgradeFrame.keysKept` are gone, as no theorem read them ([#1908](https://github.com/ethereum/EthLib/issues/1908)); `advanceSlot_keys` becomes `advanceSlot_kept`, without the key conjunct.
+  The setter laws of `EpochFrameLaws` and the frame lemmas of validator writes no longer take a key equality, and the `_of_whole` forms no longer take the old validator.
+  `activeKept_processEpoch`, `activeKept_processBlock`, `activeKept_advanceSlot`, `ChainStep.activeKept`, `activeKept_of_chainSteps`, `processBlock_attestationSplit`, `voteFrame_processBlock`, `committeesKept_processBlock`, `committeesKept_advanceSlot`, `RunKept.committeesKept`, `slackJustifiedCheckpoints_chainRoot_of_chainSteps`, `slackFinalized_chainRoot_of_chainSteps` and `processEffectiveBalanceUpdates_effectiveBalance` drop their registry-size argument.
+  `SlackStepBounds` drops its field `small`, and the field `RunKept.active` no longer takes a registry bound.
+  `getTotalActiveBalance` reads the checked active indices.
+  The new `getActiveValidatorIndicesChecked` converts each active position with `ofNatChecked`, as the specification builds each index, and the new `getCommitteeCountPerSlotChecked` also converts their count.
+  `getActiveValidatorIndicesChecked_eq_ok_iff` replaces `getActiveValidatorIndices_eq_mapM_ofNatChecked`, and `getTotalActiveBalance_ne_indexOutOfRange` drops its registry bound.
+  New lemmas on the checked read: `getActiveValidatorIndicesChecked_ok`, `_of_size_le`, `_of_within`, `_of_attesterShuffle`, `_error` and `_eq_error`, `lt_of_getActiveValidatorIndicesChecked_ok`, `sorted_of_getActiveValidatorIndicesChecked_ok`, `mem_iff_of_getActiveValidatorIndicesChecked_ok` and `ActiveKept.getActiveValidatorIndicesChecked_eq`.
+  New lemmas on the checked count: `getCommitteeCountPerSlotChecked_of_within` and `getCommitteeCountPerSlotChecked_ok`; in `Base`, `ofNatChecked_toNat`, `mapM_ofNatChecked_eq_ok_iff` and `mapM_ofNatChecked_error`.
+  `getValidatorAt_eq_ok_iff`, `getBalanceAt_eq_ok_iff` and `committeePositions_ne_nil` are new.
+  The new `committeeCountOf` gives the committee count for a number of active validators, so the checked count converts the length of the checked list without a second pass over the registry.
+  `CommitteesKept.of_seed` also takes the equality of the checked active indices of the two states.
+  `proposerCandidates` takes the checked active indices instead of the epoch, and `proposerCandidates_spec` places each candidate among them.
+  `getEligibleValidatorIndices_sorted`, `getEligibleValidatorIndices_ok` and `processInactivityUpdates_scores` drop their registry bound: the new `getEligibleValidatorIndices_fits` bounds each eligible position of a successful computation, and the new `validatorPositions_sorted_of_fits` sorts positions under such a bound.
+  The new `depositTargetStatus_ne_indexOutOfRange` states that the status of a deposit target never fails on an index, through the new `getElem?_toNat_eq_of_ofNatChecked`.
+  `exists_mem_getBeaconCommittee` takes a successful checked active-index read, and `attestationCommitteesSize_of_attesterShuffle` takes a successful checked committee-count read.
+  `attestationCommitteesSize_cons` includes that count check on its right side.
+- From Gloas, a deposit, a withdrawal or consolidation request, or a sync aggregate now fails where a registry position of 2^64 or more would become a validator index ([#1883](https://github.com/ethereum/EthLib/issues/1883)).
+  Such a position used to wrap modulo 2^64, so a deposit at 2^64 validators overwrote validator 0.
+  The step now fails with the accessor error `arith overflow`, as the specification fails to build a `ValidatorIndex` there.
+  Before Gloas the registry holds at most 2^40 validators, so nothing changes there.
+  No C export or Python function changes.
+  In Lean, the new `Base.Uint64.ofNatChecked` converts a natural number to a `UInt64`, and fails with an overflow at 2^64 or more.
+  `getIndexForNewValidator` now returns an `Except AccessorError ValidatorIndex`, and `queueConsolidation` takes the index of the source in place of its position.
+  `addValidatorToRegistry_validators_eq_push`, `addValidatorToRegistry_push`, `activeStep_addValidatorToRegistry` and the deposit theorems of `Proofs.Transition.Operations` and `Proofs.Transition.EpochPending` no longer take a bound on the size of the registry.
+  The fields `used`, `appliedFilter` and `movedFilter` of `PassPendingDepositsFacts` no longer take a bound either.
+  `frame_queueConsolidation`, `sameSizes_queueConsolidation` and `payloadInputs_queueConsolidation` take the index of the source in place of its position.
+- The exact change of the supply of ether across a transaction is now proved at every fork, with the burns of SELFDESTRUCT and the deleted balances as terms fixed by the run ([#1793](https://github.com/ethereum/EthLib/issues/1793)).
+  No C export or Python function changes.
+  In Lean, the rules of a relation of frames split in two: `OrdinaryStepRules` holds the rules of every write but SELFDESTRUCT, and `StepRules` extends it with the rule of SELFDESTRUCT.
+  The lemmas `sameContext`, `refl` and `lift`, and those of SSTORE, TSTORE, the calls, the creations and the instructions that send a message, move from the `StepRules` namespace to `OrdinaryStepRules`.
+  So a qualified name changes, while the dot notation on a `StepRules` value still works.
+  `OrdinaryStepRules.instruction` takes a proof that the opcode is not SELFDESTRUCT, and `StepRules.instruction` is gone; `StepRules.step` covers every instruction.
+  The new `OrdinaryStepRules.step` concludes that a step either runs SELFDESTRUCT, as the new `RunsSelfdestruct` says, or keeps the relation.
+  `runTransaction_eq_ok` now concludes `TransactionRun`, a definition that unfolds to the same seven equations, and `TransactionRun.unique` proves that its values are fixed by the transaction and its output.
+  The new `processMessage_frame_byKind` runs the induction over messages for any fact about the frame of a call, and `processMessage_rel_byKind` keeps its statement and now follows from it.
+- The fork choice now rejects an attestation whose committees are not those of its slot, a step of the safety proof of the fast confirmation rule ([#1458](https://github.com/ethereum/EthLib/issues/1458)).
+  It runs the committee check of block processing in the state of the target, with one aggregation bit for each member of the committees.
+  Before Electra the index must be below the count of committees of the slot.
+  From Electra each index of the committee bits must be below that count, each of those committees must have a bit set, and the index of the attestation must be 0 before Gloas.
+  Before, a committee index past that count named a committee of a later slot of the same epoch, or none, so a validator could vote for a slot before its own.
+  Gossip validation and block processing already rejected such an attestation.
+  The rejection is the fork choice error `transition`, which carries the error of the check, such as `committeeIndexOutOfRange`; a failed shuffle is now reported there too.
+  No signature of a C export or Python function changes, but an `attestation` step of `fork_choice` now rejects these attestations, and so does a `block` step that carries one.
+- The safety threshold of the fast confirmation rule now fails when the discount for empty slots exceeds the weight of the committees since the parent ([#1832](https://github.com/ethereum/EthLib/issues/1832)).
+  It fails with the new fork choice error `supportDiscountAboveMaximum`, of code 53, where it used to return half of what was left, or 0.
+  A block at or before the current slot never reaches that error, and a proof shows it.
+- The theorems on the four system contracts of EIP-4788, EIP-2935, EIP-7002 and EIP-7251 now hold from Glamsterdam too, with the state gas meter of EIP-8037 ([#1861](https://github.com/ethereum/EthLib/pull/1861)).
+  No C export or Python function changes.
+  In Lean, each `systemCall_set` and `systemCall_dequeue`, with its `spec_set` or `spec_dequeue`, no longer requires a fork before Glamsterdam.
+  The one-counter gas premises of `spec_set` and `spec_dequeue` are multiplied by `storageGasScale fork`, which is 1 before Glamsterdam and 5 from it.
+  `RequestQueue.sstore_writes` and `RequestQueue.sstore_then` change the same way, and their continuation must hold with up to 22,100 gas times that factor less.
+  The SSTORE rules `sstoreStep_eq`, `sstoreG`, `sstore` and `sstore_of_account` of the EVM logic now hold from Berlin at every fork.
+  They charge `sstoreTotalCost`, the price and the state gas of the write, where they charged `sstoreCost`.
+  Before Glamsterdam, `sstoreTotalCost_of_lt` turns that charge back into the price.
+  `SystemContract.systemCall_of_spec` and `SystemContract.systemCall_of_writesStorage` no longer require a fork before Glamsterdam, and take a proof that the code passes `SupportedCode` from Glamsterdam.
+- Each fork upgrade now gives one upgrade frame, and the invariant across the upgrade follows from it ([#1841](https://github.com/ethereum/EthLib/pull/1841) and [#1851](https://github.com/ethereum/EthLib/pull/1851)).
+  `UpgradeFrame` now also keeps the finalized checkpoint, and it carries the balance count and the exit order of the validators.
+  So a caller that builds one supplies the three new fields, and `UpgradeFrame.of_carried` takes the finalized checkpoint and the number of balances as new premises.
+  `UpgradeFrame`, its constructors, `UpgradeFrame.invariant` and the frame of each upgrade are in `EthLib.Consensus.Proofs.Transition.Upgrade`, and `upgradeFrame_upgradeNext` is in `EthLib.Consensus.Proofs.Transition.ForkBoundary`.
+  `upgradeFrame_carryFields` no longer takes a proof that the fork is at least Altair.
+  `Invariant.of_carried` is gone; `UpgradeFrame.invariant` replaces it.
+  No statement of an invariant theorem changes, and no C export or Python function changes.
+- The fast confirmation rule now weighs the committees of a range of slots exactly, in place of an average per slot ([#1828](https://github.com/ethereum/EthLib/issues/1828)).
+  Each active member of the committees counts once, by its effective balance in the source of balances, and a range with a whole epoch still weighs the total active balance.
+  The average did not bound a given committee, so the rule could confirm a block that an attack then reorgs.
+  The rule can now confirm fewer blocks, or more, than before, and some pinned fast confirmation vectors expect the old answers.
+  `estimateCommitteeWeightBetweenSlots`, `adjustCommitteeWeightEstimateToEnsureSafety` and `COMMITTEE_WEIGHT_ESTIMATION_ADJUSTMENT_FACTOR` are gone; the new `Store.computeCommitteeWeightBetweenSlots` replaces them, and takes the head and the source of balances.
+  `Store.computeCommitteeWeightAndMembers` also returns the members it reads, and `Store.getEquivocationScoreOf` weighs the equivocators of a given set.
+  No C export or Python function changes.
+- A contract creation now fails at an address with non-empty storage, at every fork, as [EIP-7610](https://github.com/ethereum/EIPs/blob/46976b2a9bf99f727fb87dc8c809e3a3cdc6b445/EIPS/eip-7610.md#specification) asks ([#1823](https://github.com/ethereum/EthLib/issues/1823)).
+  Before, such a creation wiped the storage and ran the init code.
+  It now fails exactly like a creation at an address with code or a nonce, as [EIP-684](https://eips.ethereum.org/EIPS/eip-684#specification) asks: a creation transaction ends with `addressCollision`, and CREATE or CREATE2 takes the gas of the message and pushes 0.
+  So a block with such a creation can now have another gas used, another state root, or be rejected.
+  From Glamsterdam, CREATE or CREATE2 that collides gets back the state gas of the new account that it paid, as [EIP-8037](https://eips.ethereum.org/EIPS/eip-8037#gas-accounting-for-new-accounts) asks of a collision.
+  Only a target with storage but no nonce, code or balance paid any.
+  `accountDeployable` also requires empty storage, through the new `accountHasStorage`.
+  The rules `createKind_stored`, `create_stored` and `create2_stored` take a new hypothesis: no fact of a slot gives the new address a word other than zero.
+  The new theorems `accountHasStorage_eq_true_iff`, `accountDeployable_eq_true_iff` and `accountDeployable_congr` state the rule.
+- The Engine API now models `engine_getPayloadV1` to `engine_getPayloadV6` ([#1848](https://github.com/ethereum/EthLib/pull/1848)).
+  `EngineError` has a new constructor, `unknownPayload`, with code 38001, so an exhaustive match on it needs a new case.
+  A store of completed builds holds the result of the payload build, its blobs bundle, the override flag and, from Glamsterdam, the block access list.
+  The returned payload must give back the stored block hash, with the stored requests and access list.
+  From version 3 the commitments of the bundle must hash to the blob hashes of the block, in order, and its proofs must verify.
+  The C export `eth_engine_get_payload` takes the configuration, the store and the request.
+  Each entry of the store holds the payload ID, the fork and the four results of `eth_engine_build_payload`.
+  Then come the network forms of the blob transactions, the flag and the access list.
+  In Python, `engine.get_payload` takes the configuration, the store, the method and its parameters.
+  The payload ID has one type, `PayloadId`, which the forkchoice update also returns.
+  The network check of a blob transaction now runs `validateBlobs` on its lists, so `countsMatch` is `blobCountsMatch` on its fields.
+- The forkchoice update now checks the timestamp of payload attributes, on an applied valid head ([#1479](https://github.com/ethereum/EthLib/issues/1479)).
+  A known payload holds the number and the timestamp of its block, so `KnownPayload` has two new fields, `number` and `timestamp`.
+  `forkchoiceUpdatedCall` takes the chain configuration first, and returns the attributes at the fork of their timestamp.
+  Attributes of a fork that the version does not take now give code 38005, `unsupportedFork`.
+  Version 1 takes Paris, version 2 Paris and Shapella, version 3 Dencun to BPO5, and version 4 Glamsterdam.
+  Version 2 with the structure of version 1 from Shapella, or of version 2 before it, gives code 38003.
+  So do attributes whose timestamp is not above that of the head.
+  The C export `eth_engine_forkchoice_updated` takes the configuration first, and each payload of the tree needs `number` and `timestamp`.
+  In Python, `engine.forkchoice_updated` takes the configuration first.
+- The forkchoice update now models `engine_forkchoiceUpdatedV4`, and it checks the structure of the payload attributes on an applied valid head ([#1478](https://github.com/ethereum/EthLib/issues/1478)).
+  Attributes that fit no structure of the version now give code 38003, `invalidPayloadAttributes`, where any object gave code 0 before.
+  Attributes that fit still give code 0, since no payload build is specified.
+  A wrong number of parameters now has the reason `params: got N, expected 2`, or `2 or 3` for version 4, in place of `params: not 2 values`.
+  `forkchoiceUpdatedParams` takes the version first and returns the attributes as JSON, or `none`, in place of a flag.
+  `EngineError` has a new constructor, `invalidPayloadAttributes`, with code 38003.
+- `MIN_REQUEST_LIMIT`, the fewest versioned hashes that `engine_getBlobs` must take in one request, is now `MIN_BLOBS_REQUEST_LIMIT`.
+  Its value stays 128, and no C export or Python function changes.
+- The optimistic store now holds its head as a fork choice node, a root and the status of its payload, in place of the root of the head block ([#1475](https://github.com/ethereum/EthLib/issues/1475)).
+  From Gloas, the optimism of the head reads the payload that the status names, so it can fail as a payload chain does, and it returns an `Except`.
+  The C export `eth_consensus_is_optimistic_node` takes the code of that status after the head root: 0 empty, 1 full and 2 pending.
+  In Python, `consensus.is_optimistic_node` takes it as the keyword `head_payload_status`, 2 by default, so a call before Gloas gets the same answer as before.
+  The latest verified ancestor now takes a fork choice node; before Gloas it reads only the root.
+  The C export `eth_consensus_latest_verified_ancestor` takes the code of the status after the root, and `consensus.latest_verified_ancestor` takes it as the keyword `payload_status`, 2 by default.
+  The latest verified ancestor and the optimistic node now run at Gloas.
+  The theorem `latestVerifiedAncestor_of_glamsterdam` now states the Gloas answer, no longer a failure.
+  The optimistic node then fails when the head is not optimistic, since its second case is not yet specified.
+- `compute_min_epochs_for_block_requests` now takes the fork, and from Gloas it applies a formula derived from the [weak subjectivity period of EIP-8061](https://eips.ethereum.org/EIPS/eip-8061#weak-subjectivity-period).
+  Before, every fork got the Phase 0 value: 33024 epochs on mainnet, where Gloas asks for 14299.
+  `Config.computeMinEpochsForBlockRequests` takes the fork as a new argument.
+  The C export `eth_consensus_compute_min_epochs_for_block_requests` reads the configuration and the fork as a pair, as `eth_consensus_gossip_topics` does.
+  In Python, `consensus.compute_min_epochs_for_block_requests` takes the fork first, then the configuration, `mainnet` by default.
+- `NoiseError` now gives its own code to each failure of the local identity secret, of signing and of the saved remote message, in the libp2p Noise handshake ([#1657](https://github.com/ethereum/EthLib/issues/1657)).
+  Before, a failure of the secret or of signing had code 9, the code of an invalid remote identity.
+  An identity secret that is 0, or at least the secp256k1 group order, now gives code 11, `identitySecret`.
+  A failure of ECDSA signing with that secret gives code 12, `signing`.
+  Completion of a state whose saved remote message is missing, or does not match the state, gives code 13, `savedRemote`.
+  Before, such a state gave the error of the failed step: code 1, 3, 4, 6, 7, 8 or 9.
+  Code 9 now means only a remote identity that fails to authenticate.
+- The libp2p Noise handshake gives the identity secret, the chaining key and the handshake hash their own types, apart from the type of the X25519 keys ([#1657](https://github.com/ethereum/EthLib/issues/1657)).
+  The secp256k1 identity secret of `writeLibp2p` and `makePayload` is a scalar `Secp256k1.Fn`, in place of 32 bytes.
+  `Libp2p.publicKey` and `Libp2p.sign` take that scalar too, and the exports read it from 32 big-endian bytes whose value must be below the group order.
+  The chaining key and the handshake hash of `SymmetricState` have the types `ChainingKey` and `HandshakeHash`, and `hkdf2` takes a `ChainingKey`.
+  The C exports and the Python functions keep their signatures: they take the secret and return the chaining key and the hash as 32 bytes.
+  `writeLibp2p` now rejects a zero identity secret before every other check, on every message, message 1 included.
+  The C export `eth_noise_libp2p_write`, and `noise_libp2p_write` in Python, give code 11 for a secret of 0 or at least the group order.
+  Before, a write at step 0 ignored the secret: message 1 succeeded, and a responder writing out of turn got code 1, `wrongPhase`, or code 10, `firstMessageExtensions`.
+- The libp2p Noise state now stores the authenticated remote, in place of the encrypted remote message and the state before it ([#1657](https://github.com/ethereum/EthLib/issues/1657)).
+  Completion returns that remote with the transport ciphers, and reads no message.
+  It returns `Remote × CipherState × CipherState`.
+  `Libp2pState.remoteMessage` is now `Libp2pState.remote`, a `Remote` with the static key, the identity point, the signature and the extensions.
+  `AuthenticatedRemote`, `RemoteInfo` and `remoteInfo` are removed, and `authenticatePayload` returns a `Remote`.
+  `writeLibp2p` no longer runs completion after message 3.
+  The Python state of `noise_libp2p_*` holds the remote as `(static_key, public_key, signature, extensions)`, or `None`, in place of the saved message and its state.
+  Completion checks that the stored remote has the remote static key of the handshake, and no longer verifies its signature.
+  Code 13, `savedRemote`, now means that at completion the state holds no remote, or one whose static key is not the remote static key of the handshake.
+  `readLibp2p_authenticates` now concludes that the new state stores the authenticated `Remote`.
+  The theorems `complete_authenticates` and `complete_peerId` are replaced by `complete_ok` and the `Produced` theorems, and `authenticatePayload_decode` by `authenticatePayload_ok`.
+  The C exports and Python functions that take a libp2p state, to write, read or complete, also give code 13 when the stored public key does not decode.
+- `ethlib.networking.noise` now exports short typed wrappers in place of the raw `noise_*` names of the extension ([#1657](https://github.com/ethereum/EthLib/issues/1657)).
+  `noise_initialize` is now `initialize`, `noise_cipher_encrypt` is `cipher_encrypt`, `noise_libp2p_complete` is `libp2p_complete`, and so on; `libp2p_write` takes `extensions=None` by default.
+  The package also exports the type aliases of its states, `CipherState`, `HandshakeState`, `Remote`, `Libp2pState`, `Identity` and `Completion`, which `lake exe gen-bindings` writes from Lean, and `NoiseError`.
+  The extension methods keep their names and signatures.
+- A chain configuration now holds the address of its deposit contract, and the deposit requests of a block come from that address ([#1486](https://github.com/ethereum/EthLib/issues/1486)).
+  Before, every chain read deposits from the mainnet address, so a chain with another deposit contract, such as Sepolia, got no deposit request.
+  The configuration that the exports read as JSON, or as a Python `dict`, must give `depositContractAddress`: `0x` and forty hex digits, or 20 bytes in Python.
+  A configuration without it is rejected with `config: no depositContractAddress`.
+  `depositRequests`, the C export `eth_block_deposit_requests` and `blocks.deposit_requests` in Python take the address first.
+- The output of the VRF tree at index `i` now hashes the index before the secret: `keccak256(PQ_VRF_OUTPUT | LE32(i) | s)` ([#1652](https://github.com/ethereum/EthLib/pull/1652)).
+  Every output changes, for every root, index and seed.
+  Roots and openings are unchanged, so an existing opening still verifies, but returns a different output.
+  `verify`, `verifyBytes` and `evaluate` keep their arguments, and `outputHash` takes the index.
+  Before, one secret placed at every leaf gave every index the same output, which the holder could choose.
+  A new `mixOutput`, the C export `eth_vrf_mix` and `vrf.mix` in Python hash an output with randomness.
+  A selection must compare that mixed value, with randomness revealed after the root is registered.
 - `engine_forkchoiceUpdated` now applies step 2 of its specification ([#1018](https://github.com/ethereum/EthLib/pull/1018)).
   The execution layer may know a finalized block from an earlier update.
   A valid head below that block is answered `VALID`, and the forkchoice state is not checked.
@@ -234,6 +493,12 @@ Not yet released.
   In Lean, `GossipTopic.sizeLimit` now takes the configuration, and the gossip `sizeLimit_ne_none_iff` names the data column sidecar topics.
   From `glamsterdam`, `decodePayload_message` at a sidecar topic now needs a message within the size limit of the topic.
   `responseBounds_eq` now takes a protocol without a size limit, and `decodeResponseChunk_response` a value within the size limit of its protocol.
+- The rules that a transaction must pass alone now reject a transaction whose type the fork does not have, with `unsupportedType` and the type ([#1779](https://github.com/ethereum/EthLib/issues/1779)).
+  Before, only decoding rejected it, so a block built in Lean could run a type-4 transaction before Pectra, or a type-3 transaction before Dencun.
+  `validateTransaction` checks the type first, and the inclusion check and `checkTransaction` call it, so they reject such a transaction too.
+  The exports decode each transaction at its fork first, so their answers do not change.
+  In Lean, `validateTransaction_eq_ok_iff` ends with the new conjunct `tx.fork ≤ fork`, and `checkInclusion_fork_le` derives it from a passing inclusion check.
+  `processTransaction_nonce_lt` no longer takes the hypothesis `tx.fork ≤ fork`.
 
 ## 0.3.0
 

@@ -2,6 +2,7 @@ module
 
 public import EthLib.Base.Proofs.MapM
 public import EthLib.Execution.Proofs.Evm.Call.MessageCall
+public import EthLib.Execution.Proofs.Evm.Call.Run
 public import EthLib.Execution.Proofs.Evm.Call.StaticStep
 
 /-!
@@ -59,7 +60,7 @@ theorem staticStep_runPrecompile {address : Nat} {evm after : Evm fork Meter}
     · cases h
       exact staticStep_exceptionalHalt _ _
     · cases h
-      exact ⟨StateKept.refl _, rfl, rfl, rfl, rfl⟩
+      exact ⟨StateKept.refl _, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 omit [GasMeter Meter] in
 /-- The frame that starts a static message is a static frame. -/
@@ -437,14 +438,14 @@ theorem staticTouchResult_genericCall {evm : Evm fork Meter} {message : Message 
     | ok after =>
       simp only [hs, Functor.map, Except.map, Except.ok.injEq] at h
       subst h
-      exact (⟨StateKept.refl _, rfl, rfl, rfl, rfl⟩ : StaticStep evm
+      exact (⟨StateKept.refl _, rfl, rfl, rfl, rfl, rfl, rfl⟩ : StaticStep evm
         (refillStateGas { evm with returnData := .empty } newAccount)).trans
         (staticStep_skipCall hs)
   · cases h
-    refine ⟨⟨StateKept.refl _, rfl, rfl, rfl, rfl⟩, hmsg, ?_⟩
+    refine ⟨⟨StateKept.refl _, rfl, rfl, rfl, rfl, rfl, rfl⟩, hmsg, ?_⟩
     intro touched child after hres kept parent hrec
     have pre : StaticStep evm { evm with returnData := .empty } :=
-      ⟨StateKept.refl _, rfl, rfl, rfl, rfl⟩
+      ⟨StateKept.refl _, rfl, rfl, rfl, rfl, rfl, rfl⟩
     exact pre.trans_touchStep (staticTouchStep_resumeCall hres kept parent hrec)
 
 /-- A paid call in a static frame gives a static step, or a static touch child.
@@ -467,7 +468,7 @@ theorem staticTouchResult_finishCall {kind : CallKind} {call : CallOperands} {ca
   dsimp only at h
   have pre : StaticStep evm (recordAccountRead { evm with
       memory := memoryExtend evm.memory expandBy, gas := GasMeter.drain evm.gas }
-      evm.message.currentTarget) := ⟨StateKept.refl _, rfl, rfl, rfl, rfl⟩
+      evm.message.currentTarget) := ⟨StateKept.refl _, rfl, rfl, rfl, rfl, rfl, rfl⟩
   split at h
   · cases hs : skipCall (refillStateGas (recordAccountRead { evm with
         memory := memoryExtend evm.memory expandBy, gas := GasMeter.drain evm.gas }
@@ -481,7 +482,7 @@ theorem staticTouchResult_finishCall {kind : CallKind} {call : CallOperands} {ca
           evm.message.currentTarget)
           (refillStateGas (recordAccountRead { evm with
           memory := memoryExtend evm.memory expandBy, gas := GasMeter.drain evm.gas }
-          evm.message.currentTarget) newAccount) := ⟨StateKept.refl _, rfl, rfl, rfl, rfl⟩
+          evm.message.currentTarget) newAccount) := ⟨StateKept.refl _, rfl, rfl, rfl, rfl, rfl, rfl⟩
       exact (pre.trans refill).trans (staticStep_skipCall hs)
   · refine StaticTouchResult.lift pre (staticTouchResult_genericCall ?_ h)
     have hcall : kind = .call → call.value = 0 := by
@@ -634,27 +635,26 @@ theorem staticTouchStep_runFrame
     (hf : StaticFrame evm)
     (h : runFrame step decreases bound runChild evm within = .ok after) :
     ∃ touched, StaticTouchStep touched evm after := by
-  fun_induction runFrame step decreases bound runChild evm within
-  case case1 => cases h
-  case case2 => cases h; exact ⟨[], .of_staticStep (staticStep_exceptionalHalt _ _)⟩
-  case case3 =>
-    rename_i result _ ih
-    have n := next hf result
-    obtain ⟨t, ht⟩ := ih (StaticFrame.of_staticStep n hf) h
-    exact ⟨_, n.trans_touchStep ht⟩
-  case case4 => cases h
-  case case5 => cases h
-  case case6 => cases h; exact ⟨[], .of_staticStep (staticStep_exceptionalHalt _ _)⟩
-  case case7 =>
-    obtain ⟨c0, hmsg, hres⟩ := child hf ‹step _ = .ok (.child _ _ _)›
-    obtain ⟨tc, kept, parent, hrec⟩ :=
-      runs (StaticFrame.of_staticStep c0 hf) hmsg ‹runChild _ _ _ = .ok _›
-    have n := hres tc _ _ (by assumption) kept parent hrec
-    obtain ⟨tr, htr⟩ :=
-      ‹StaticFrame _ → runFrame _ _ _ _ _ _ = .ok after → ∃ t, StaticTouchStep t _ after›
-        (StaticFrame.of_touchStep n hf) h
-    exact ⟨_, n.trans htr⟩
-  case case8 => cases h; exact ⟨[], StaticTouchStep.refl _⟩
+  refine rel_runFrame (R := fun a b => ∃ touched, StaticTouchStep touched a b)
+    (C := fun caller message c => StaticMessage caller.state message →
+      ∃ touched, TouchesOnly touched caller.state c.state ∧
+        c.state.parent = caller.state.parent ∧
+        ∀ address ∈ touched, c.error = none ∧ fork < .paris ∧
+          ((.spuriousDragon ≤ fork → address ∈ c.substate.touchedAccounts) ∨
+            address = c.message.currentTarget))
+    (Inv := StaticFrame) (fun _ => ⟨[], StaticTouchStep.refl _⟩)
+    (fun ⟨_, hab⟩ ⟨_, hbc⟩ => ⟨_, hab.trans hbc⟩)
+    (fun hf ⟨_, hab⟩ => StaticFrame.of_touchStep hab hf)
+    (fun _ _ _ => ⟨[], .of_staticStep (staticStep_exceptionalHalt _ _)⟩) ?_
+    (fun _ _ _ _ hf hrun hmsg => runs hf hmsg hrun) hf h
+  intro evm' result hf' hstep
+  cases result with
+  | next after' => exact ⟨[], .of_staticStep (next hf' hstep)⟩
+  | child caller message resume =>
+    obtain ⟨c0, hmsg, hres⟩ := child hf' hstep
+    refine ⟨⟨[], .of_staticStep c0⟩, fun c after' hresumed hc => ?_⟩
+    obtain ⟨tc, kept, parent, hrec⟩ := hc hmsg
+    exact ⟨_, hres tc c after' hresumed kept parent hrec⟩
 
 end TouchLoop
 
@@ -752,14 +752,15 @@ theorem processMessage_touchesOnly_static [LawfulGasMeter Meter] :
           split at hdo
           · cases hdo
             exact stepCore h1 hp1
-              (.of_staticStep ⟨TransactionState.SameOutside.refl _ _, rfl, rfl, rfl, rfl⟩)
+              (.of_staticStep ⟨TransactionState.SameOutside.refl _ _, rfl, rfl, rfl, rfl, rfl, rfl⟩)
           · split at hdo
             · rename_i after hrp
               cases hdo
               exact stepCore h1 hp1 (.of_staticStep (staticStep_runPrecompile hrp))
             · cases hdo
               exact stepCore h1 hp1
-                (.of_staticStep ⟨TransactionState.SameOutside.refl _ _, rfl, rfl, rfl, rfl⟩)
+                (.of_staticStep
+                  ⟨TransactionState.SameOutside.refl _ _, rfl, rfl, rfl, rfl, rfl, rfl⟩)
     have hval := congrArg Subtype.val rolled
     simp only at hval
     rw [← hval]

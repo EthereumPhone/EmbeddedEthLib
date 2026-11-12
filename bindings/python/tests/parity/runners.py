@@ -71,6 +71,10 @@ NOT_YET_AT = {
 
 _YAML = YAML(typ="safe")
 
+# The fixtures use the deposit contract of mainnet, at the address of EIP-6110.
+# It is given as the checksummed text of a genesis file, so the deposits read that form too.
+DEPOSIT_CONTRACT_ADDRESS = "0x00000000219ab540356cBB839Cbe05303d7705Fa"
+
 
 def _yaml(path: Path):
     return _YAML.load(path.read_text())
@@ -110,7 +114,7 @@ def _hex(value: str) -> bytes:
     return bytes.fromhex(value.removeprefix("0x"))
 
 
-def _pre_state(pre: dict) -> bytes:
+def pre_state(pre: dict) -> bytes:
     """The state in the form of the state root export: address, nonce, balance, code, storage."""
     from ethlib.serialization import rlp
 
@@ -202,7 +206,7 @@ def _state_test(root: Path, case: Case) -> None:
         fork,
         int(fixture["config"]["chainid"], 16),
         _hex(post["txbytes"]),
-        _pre_state(fixture["pre"]),
+        pre_state(fixture["pre"]),
         _environment(fixture["env"]),
     )
     if "expectException" in post:
@@ -338,6 +342,7 @@ def chain_of(fixture: dict) -> tuple[dict, list]:
         )
     config = {
         "chainId": int(fixture["config"]["chainid"], 16),
+        "depositContractAddress": DEPOSIT_CONTRACT_ADDRESS,
         "activations": [list(a) for a in activations],
         "blobSchedules": sorted(schedules, key=lambda s: s[1]),
     }
@@ -362,7 +367,7 @@ def genesis_of(fork: str, header: dict, pre: dict) -> bytes:
 
     return blocks.genesis_block(
         fork,
-        _pre_state(pre),
+        pre_state(pre),
         coinbase=_hex(header["coinbase"]),
         difficulty=number("difficulty"),
         gas_limit=number("gasLimit"),
@@ -390,7 +395,7 @@ def _blockchain_test(root: Path, case: Case) -> None:
     assert genesis_of(recent[0][0], fixture["genesisBlockHeader"], fixture["pre"]) == _hex(
         fixture["genesisRLP"]
     )
-    state = _pre_state(fixture["pre"])
+    state = pre_state(fixture["pre"])
     for block in fixture["blocks"]:
         raw = _hex(block["rlp"])
         expected = block.get("expectException")
@@ -513,7 +518,7 @@ def _start(pre: dict, genesis: dict, fork: str) -> tuple[bytes, bytes]:
     """The state of a chain before its first payload, and the header of its genesis block."""
     from ethlib.serialization import rlp
 
-    return _pre_state(pre), rlp.encode(rlp.decode(genesis_of(fork, genesis, pre))[0])
+    return pre_state(pre), rlp.encode(rlp.decode(genesis_of(fork, genesis, pre))[0])
 
 
 # The fixtures of a group of blockchain_test_engine_x share one state, of up to 14 MB of JSON.
@@ -556,11 +561,22 @@ def _blockchain_test_engine(root: Path, case: Case) -> None:
     run_engine_chain(fixture, fixture["pre"], fixture["genesisBlockHeader"])
 
 
+def _pre_alloc(case: Case) -> str:
+    """The directory of the states and geneses that the fixtures of an engine_x format share."""
+    return "/".join([*case.path.split("/")[:2], "pre_alloc"])
+
+
+def reads(case: Case) -> list[str]:
+    """The archive paths that the runner of an execution-spec-tests case reads."""
+    if case.group == "blockchain_test_engine_x":
+        return [case.path, _pre_alloc(case)]
+    return [case.path]
+
+
 def _blockchain_test_engine_x(root: Path, case: Case) -> None:
     # The fixtures of one group share their state and genesis in a file named by its hash.
     fixture = _fixtures(root / case.path)[case.id]
-    directory = root.joinpath(*case.path.split("/")[:2])
-    path = directory / "pre_alloc" / f"{fixture['preHash']}.json"
+    path = root / _pre_alloc(case) / f"{fixture['preHash']}.json"
     shared = _fixtures(path)
     run_engine_chain(
         fixture, shared["pre"], shared["genesis"], lambda fork: _shared_start(path, fork)

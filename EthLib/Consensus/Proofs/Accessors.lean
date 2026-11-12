@@ -2,6 +2,7 @@ module
 
 public import EthLib.Base.Proofs.Uint64
 public import EthLib.Consensus.Accessors
+public import EthLib.Consensus.Credentials
 public import EthLib.Consensus.Proofs.ShufflePermutation
 public import EthLib.Consensus.Proofs.Signing
 
@@ -14,21 +15,41 @@ That needs the registry to stay within the limit of the preset, which its type s
 
 From Gloas the registry is a progressive list, so these theorems take the bound as a hypothesis.
 
+A position of the registry is active in an epoch when the validator there is.
+
+The effective balances are aligned when each is a whole number of increments.
+
+When the largest values of the preset are aligned, so is the largest of each validator.
+
 A marked sum of effective balances is their sum over the marked positions.
 
 A total balance reads its indices as a set: their order and their repeats do not matter.
 
 A total balance is at least one effective balance increment.
 
-The total active balance never fails on an index, only on a sum of 2^64 or more.
+The total active balance rejects an active position or a balance sum of `2^64` or more.
 
 The previous epoch is the current one minus one, or the genesis epoch at genesis.
+
+On natural numbers, the current epoch is the slot over the epoch length, less one for the previous.
 
 Each slot has from one committee up to the most committees of the preset.
 
 Each member of a committee, and each validator that an attestation shows, is active in its epoch.
 
 Every active validator is in a committee of its epoch, and no validator is in two of them.
+
+A committee is cut from the shuffle of the epoch of its slot.
+
+The members of the committees of a slot, cut from one shuffle, are those of each committee in turn.
+
+A validator is among those members exactly when one of the committees holds it.
+
+From Electra, the attesters of some committees, cut from one shuffle, are those of each in turn.
+
+The signers of an attestation are those cut from the shuffle of the epoch of its slot.
+
+This holds when that shuffle has a value.
 
 The indices of an attestation increase strictly, as the check of an indexed attestation asks.
 
@@ -51,6 +72,55 @@ open Base Uint64 Serialization.Ssz
 
 variable {preset : Preset} {fork : Base.Fork}
 
+/-- Whether the validator at a position of the registry is active in an epoch.
+
+A position outside the registry is not active. -/
+def isActiveAt (state : BeaconState preset fork) (epoch : Epoch) (position : Nat) : Bool :=
+  (state.validators.data[position]?.map (isActiveValidator · epoch)).getD false
+
+/-- A position is active in an epoch exactly when it holds a validator active in that epoch. -/
+theorem isActiveAt_eq_true_iff {state : BeaconState preset fork} {epoch : Epoch}
+    {position : Nat} :
+    isActiveAt state epoch position = true ↔ ∃ validator,
+      state.validators.data[position]? = some validator ∧
+        isActiveValidator validator epoch = true := by
+  cases found : state.validators.data[position]? <;> simp [isActiveAt, found]
+
+/-- Every effective balance of the registry is a whole number of increments. -/
+def EffectiveBalancesAligned (state : BeaconState preset fork) : Prop :=
+  ∀ validator ∈ state.validators.data,
+    validator.effectiveBalance % preset.EFFECTIVE_BALANCE_INCREMENT = 0
+
+/-- Each largest effective balance of the preset is a whole number of increments.
+
+These are the largest before Electra, the activation balance and the largest from Electra. -/
+def MaxEffectiveBalancesAligned (preset : Preset) : Prop :=
+  preset.MAX_EFFECTIVE_BALANCE % preset.EFFECTIVE_BALANCE_INCREMENT = 0 ∧
+    preset.MIN_ACTIVATION_BALANCE % preset.EFFECTIVE_BALANCE_INCREMENT = 0 ∧
+    preset.MAX_EFFECTIVE_BALANCE_ELECTRA % preset.EFFECTIVE_BALANCE_INCREMENT = 0
+
+/-- The mainnet preset has aligned largest values. -/
+theorem maxEffectiveBalancesAligned_mainnet : MaxEffectiveBalancesAligned Preset.mainnet := by
+  unfold MaxEffectiveBalancesAligned
+  decide
+
+/-- The minimal preset has aligned largest values. -/
+theorem maxEffectiveBalancesAligned_minimal : MaxEffectiveBalancesAligned Preset.minimal := by
+  unfold MaxEffectiveBalancesAligned
+  decide
+
+/-- With aligned largest values in the preset, the largest of each validator is aligned. -/
+theorem withdrawalMaxEffectiveBalance_aligned (maxAligned : MaxEffectiveBalancesAligned preset)
+    (validator : Validator) :
+    withdrawalMaxEffectiveBalance preset fork validator % preset.EFFECTIVE_BALANCE_INCREMENT =
+      0 := by
+  unfold withdrawalMaxEffectiveBalance getMaxEffectiveBalance
+  split
+  · split
+    · exact maxAligned.2.2
+    · exact maxAligned.2.1
+  · exact maxAligned.1
+
 /-- A position of the validator registry, as a validator index, keeps its value.
 
 The registry must stay within the limit of the preset, which its type says before Gloas. -/
@@ -61,30 +131,157 @@ theorem toNat_toUInt64_of_lt {state : BeaconState preset fork}
   have limit := preset.VALIDATOR_REGISTRY_LIMIT.toNat_lt
   rw [Nat.toUInt64_eq, UInt64.toNat_ofNat', Nat.mod_eq_of_lt (by omega)]
 
+/-- An index whose position holds a validator active in an epoch is active in that epoch. -/
+theorem mem_getActiveValidatorIndices_of_isActiveAt {state : BeaconState preset fork}
+    {epoch : Epoch} {index : ValidatorIndex} (active : isActiveAt state epoch index.toNat = true) :
+    index ∈ getActiveValidatorIndices state epoch := by
+  obtain ⟨validator, found, isActive⟩ := isActiveAt_eq_true_iff.mp active
+  simp only [getActiveValidatorIndices, List.mem_filterMap, Option.ite_none_right_eq_some,
+    Option.some.injEq, List.mem_zipIdx_iff_getElem?, Prod.exists]
+  exact ⟨validator, index.toNat, by simpa using found, isActive, by simp⟩
+
+/-- The active positions of a registry, converted without a check, are the active indices. -/
+private theorem map_activePositions (state : BeaconState preset fork) (epoch : Epoch) :
+    (state.validators.data.toList.zipIdx.filterMap fun (validator, position) =>
+        if isActiveValidator validator epoch then some position else none).map Nat.toUInt64 =
+      getActiveValidatorIndices state epoch := by
+  rw [getActiveValidatorIndices, List.map_filterMap]
+  congr
+  funext ⟨validator, position⟩
+  dsimp only
+  split <;> rfl
+
+/-- A position is an active position exactly when the validator there is active. -/
+private theorem mem_activePositions {state : BeaconState preset fork} {epoch : Epoch}
+    {position : Nat} :
+    position ∈ (state.validators.data.toList.zipIdx.filterMap fun (validator, position) =>
+        if isActiveValidator validator epoch then some position else none) ↔
+      ∃ inside : position < state.validators.data.size,
+        isActiveValidator state.validators.data[position] epoch = true := by
+  simp only [List.mem_filterMap, Option.ite_none_right_eq_some, Option.some.injEq,
+    List.mem_zipIdx_iff_getElem?, Prod.exists]
+  constructor
+  · rintro ⟨validator, _, found, active, rfl⟩
+    obtain ⟨inside, read⟩ := Array.getElem?_eq_some_iff.mp (by simpa using found)
+    exact ⟨inside, read ▸ active⟩
+  · rintro ⟨inside, active⟩
+    exact ⟨_, position, by simp [inside], active, rfl⟩
+
+/-- The checked read gives the active indices exactly when each active position is below `2^64`.
+
+The specification builds each active index with that check, so it fails otherwise.
+
+Otherwise the pure list wraps some active position modulo `2^64`. -/
+theorem getActiveValidatorIndicesChecked_eq_ok_iff {state : BeaconState preset fork}
+    {epoch : Epoch} :
+    getActiveValidatorIndicesChecked state epoch = .ok (getActiveValidatorIndices state epoch) ↔
+    ∀ position (inside : position < state.validators.data.size),
+      isActiveValidator state.validators.data[position] epoch = true → position < 2 ^ 64 := by
+  rw [getActiveValidatorIndicesChecked, liftArith, mapError_ok_iff, mapM_ofNatChecked_eq_ok_iff,
+    map_activePositions]
+  simp only [and_true]
+  constructor
+  · intro below position inside active
+    exact below position (mem_activePositions.mpr ⟨inside, active⟩)
+  · intro below position member
+    obtain ⟨inside, active⟩ := mem_activePositions.mp member
+    exact below position inside active
+
+/-- A successful checked read agrees with the pure list of active indices. -/
+theorem getActiveValidatorIndicesChecked_ok {state : BeaconState preset fork} {epoch : Epoch}
+    {indices : List ValidatorIndex}
+    (computed : getActiveValidatorIndicesChecked state epoch = .ok indices) :
+    indices = getActiveValidatorIndices state epoch := by
+  rw [getActiveValidatorIndicesChecked, liftArith, mapError_ok_iff,
+    mapM_ofNatChecked_eq_ok_iff, map_activePositions] at computed
+  exact computed.2
+
+/-- The checked read fails only by an overflow. -/
+theorem getActiveValidatorIndicesChecked_error {state : BeaconState preset fork} {epoch : Epoch}
+    {error : AccessorError}
+    (computed : getActiveValidatorIndicesChecked state epoch = .error error) :
+    error = .arith .overflow := by
+  rw [getActiveValidatorIndicesChecked, liftArith] at computed
+  cases converted : (state.validators.data.toList.zipIdx.filterMap fun (validator, position) =>
+      if isActiveValidator validator epoch then some position else none).mapM ofNatChecked with
+  | ok => simp [converted, Except.mapError] at computed
+  | error arith =>
+    simp only [converted, Except.mapError, Except.error.injEq] at computed
+    rw [← computed, mapM_ofNatChecked_error converted]
+
+/-- An active position of `2^64` or more makes the checked read fail by an overflow. -/
+theorem getActiveValidatorIndicesChecked_eq_error {state : BeaconState preset fork}
+    {epoch : Epoch}
+    (large : ¬ ∀ position (inside : position < state.validators.data.size),
+      isActiveValidator state.validators.data[position] epoch = true → position < 2 ^ 64) :
+    getActiveValidatorIndicesChecked state epoch = .error (.arith .overflow) := by
+  cases computed : getActiveValidatorIndicesChecked state epoch with
+  | ok indices =>
+    rw [getActiveValidatorIndicesChecked_ok computed] at computed
+    exact absurd (getActiveValidatorIndicesChecked_eq_ok_iff.mp computed) large
+  | error error => rw [getActiveValidatorIndicesChecked_error computed]
+
+/-- A successful checked read leaves every active position below `2^64`. -/
+theorem lt_of_getActiveValidatorIndicesChecked_ok {state : BeaconState preset fork}
+    {epoch : Epoch} {indices : List ValidatorIndex} {position : Nat} {validator : Validator}
+    (computed : getActiveValidatorIndicesChecked state epoch = .ok indices)
+    (found : state.validators.data[position]? = some validator)
+    (active : isActiveValidator validator epoch = true) : position < 2 ^ 64 := by
+  obtain ⟨inside, rfl⟩ := Array.getElem?_eq_some_iff.mp found
+  rw [getActiveValidatorIndicesChecked_ok computed] at computed
+  exact getActiveValidatorIndicesChecked_eq_ok_iff.mp computed position inside active
+
+/-- The checked read succeeds when every position of the registry fits in 64 bits. -/
+theorem getActiveValidatorIndicesChecked_of_size_le {state : BeaconState preset fork}
+    (small : state.validators.data.size ≤ 2 ^ 64) (epoch : Epoch) :
+    getActiveValidatorIndicesChecked state epoch = .ok (getActiveValidatorIndices state epoch) :=
+  getActiveValidatorIndicesChecked_eq_ok_iff.mpr fun _ inside _ => Nat.lt_of_lt_of_le inside small
+
+/-- A registry within its preset limit has the same checked and pure active indices. -/
+theorem getActiveValidatorIndicesChecked_of_within {state : BeaconState preset fork}
+    (within : state.RegistryWithinLimit) (epoch : Epoch) :
+    getActiveValidatorIndicesChecked state epoch = .ok (getActiveValidatorIndices state epoch) :=
+  getActiveValidatorIndicesChecked_of_size_le
+    (Nat.le_trans within (Nat.le_of_lt preset.VALIDATOR_REGISTRY_LIMIT.toNat_lt)) epoch
+
+/-- A successful checked read lists exactly the indices that name an active validator. -/
+theorem mem_iff_of_getActiveValidatorIndicesChecked_ok {state : BeaconState preset fork}
+    {epoch : Epoch} {indices : List ValidatorIndex}
+    (computed : getActiveValidatorIndicesChecked state epoch = .ok indices)
+    {index : ValidatorIndex} :
+    index ∈ indices ↔
+      ∃ validator, state.validators.data[index.toNat]? = some validator ∧
+        isActiveValidator validator epoch = true := by
+  rw [getActiveValidatorIndicesChecked_ok computed]
+  refine ⟨fun member => ?_, fun found =>
+    mem_getActiveValidatorIndices_of_isActiveAt (isActiveAt_eq_true_iff.mpr found)⟩
+  rw [getActiveValidatorIndicesChecked, liftArith, mapError_ok_iff,
+    mapM_ofNatChecked_eq_ok_iff] at computed
+  obtain ⟨small, same⟩ := computed
+  rw [← map_activePositions, List.mem_map] at member
+  obtain ⟨position, listed, rfl⟩ := member
+  obtain ⟨inside, active⟩ := mem_activePositions.mp listed
+  have fits : position.toUInt64.toNat = position := by
+    rw [Nat.toUInt64_eq, UInt64.toNat_ofNat_of_lt' (small position listed)]
+  rw [fits]
+  exact ⟨_, by simp [inside], active⟩
+
 /-- An index is active exactly when it names a validator that is active in the epoch. -/
 theorem mem_getActiveValidatorIndices {state : BeaconState preset fork}
     (within : state.RegistryWithinLimit) {epoch : Epoch} {index : ValidatorIndex} :
     index ∈ getActiveValidatorIndices state epoch ↔
       ∃ validator, state.validators.data[index.toNat]? = some validator ∧
-        isActiveValidator validator epoch = true := by
-  simp only [getActiveValidatorIndices, List.mem_filterMap, Option.ite_none_right_eq_some,
-    Option.some.injEq, List.mem_zipIdx_iff_getElem?, Prod.exists]
-  constructor
-  · rintro ⟨validator, i, found, active, rfl⟩
-    have lt : i < state.validators.data.size := by
-      have := (List.getElem?_eq_some_iff.mp found).1
-      simpa using this
-    rw [toNat_toUInt64_of_lt within lt]
-    exact ⟨validator, by simpa using found, active⟩
-  · rintro ⟨validator, found, active⟩
-    refine ⟨validator, index.toNat, by simpa using found, active, ?_⟩
-    simp
+        isActiveValidator validator epoch = true :=
+  mem_iff_of_getActiveValidatorIndicesChecked_ok
+    (getActiveValidatorIndicesChecked_of_within within epoch)
 
 /-- The positions of the validators that pass a test increase strictly, as 64-bit indices.
 
-That needs a registry within its limit. -/
-theorem validatorPositions_sorted {state : BeaconState preset fork}
-    (within : state.RegistryWithinLimit) (test : Validator → Bool) :
+That needs each position that passes to be below `2^64`. -/
+theorem validatorPositions_sorted_of_fits {state : BeaconState preset fork}
+    (test : Validator → Bool)
+    (fits : ∀ entry ∈ state.validators.data.toList.zipIdx, test entry.1 = true →
+      entry.2 < 2 ^ 64) :
     (state.validators.data.toList.zipIdx.filterMap fun (validator, index) =>
       if test validator then some index.toUInt64 else none).Pairwise (· < ·) := by
   have base : state.validators.data.toList.zipIdx.Pairwise (fun a b => a.2 < b.2) := by
@@ -94,18 +291,43 @@ theorem validatorPositions_sorted {state : BeaconState preset fork}
   refine List.Pairwise.filterMap _ ?_ (List.Pairwise.and_mem.mp base)
   rintro ⟨v, i⟩ ⟨w, j⟩ ⟨mi, mj, lt⟩ a ha b hb
   simp only [Option.ite_none_right_eq_some, Option.some.injEq] at ha hb
-  obtain ⟨-, rfl⟩ := ha
-  obtain ⟨-, rfl⟩ := hb
-  have hi : i < state.validators.data.size := by simpa using (List.mem_zipIdx' mi).1
-  have hj : j < state.validators.data.size := by simpa using (List.mem_zipIdx' mj).1
-  rw [UInt64.lt_iff_toNat_lt, toNat_toUInt64_of_lt within hi, toNat_toUInt64_of_lt within hj]
+  obtain ⟨vi, rfl⟩ := ha
+  obtain ⟨wj, rfl⟩ := hb
+  rw [UInt64.lt_iff_toNat_lt, Nat.toUInt64_eq, Nat.toUInt64_eq,
+    UInt64.toNat_ofNat_of_lt' (fits _ mi vi), UInt64.toNat_ofNat_of_lt' (fits _ mj wj)]
   exact lt
+
+/-- The positions of the validators that pass a test increase strictly, as 64-bit indices.
+
+That needs a registry within its limit. -/
+theorem validatorPositions_sorted {state : BeaconState preset fork}
+    (within : state.RegistryWithinLimit) (test : Validator → Bool) :
+    (state.validators.data.toList.zipIdx.filterMap fun (validator, index) =>
+      if test validator then some index.toUInt64 else none).Pairwise (· < ·) :=
+  validatorPositions_sorted_of_fits test fun entry member _ => by
+    have inside : entry.2 < state.validators.data.size := by
+      simpa using (List.mem_zipIdx' member).1
+    have limit := preset.VALIDATOR_REGISTRY_LIMIT.toNat_lt
+    have bound : state.validators.data.size ≤ _ := within
+    omega
+
+/-- After a successful checked read, the active indices increase strictly. -/
+theorem sorted_of_getActiveValidatorIndicesChecked_ok {state : BeaconState preset fork}
+    {epoch : Epoch} {indices : List ValidatorIndex}
+    (computed : getActiveValidatorIndicesChecked state epoch = .ok indices) :
+    indices.Pairwise (· < ·) := by
+  obtain rfl := getActiveValidatorIndicesChecked_ok computed
+  refine validatorPositions_sorted_of_fits (isActiveValidator · epoch) fun entry member active => ?_
+  obtain ⟨inside, read⟩ := Array.getElem?_eq_some_iff.mp
+    (by simpa using List.mem_zipIdx_iff_getElem?.mp member)
+  exact getActiveValidatorIndicesChecked_eq_ok_iff.mp computed entry.2 inside (read ▸ active)
 
 /-- The active indices increase strictly. -/
 theorem getActiveValidatorIndices_sorted {state : BeaconState preset fork}
     (within : state.RegistryWithinLimit) (epoch : Epoch) :
     (getActiveValidatorIndices state epoch).Pairwise (· < ·) :=
-  validatorPositions_sorted within (isActiveValidator · epoch)
+  sorted_of_getActiveValidatorIndicesChecked_ok
+    (getActiveValidatorIndicesChecked_of_within within epoch)
 
 /-- Marking indices one after the other sets exactly the entries that some index names. -/
 theorem getElem?_foldl_mark (indices : List ValidatorIndex) (init : Array Bool) (j : Nat) :
@@ -247,29 +469,88 @@ theorem getTotalBalance_congr {state : BeaconState preset fork}
   exact ⟨fun ⟨inside, rest⟩ => ⟨fun i m => inside i ((same i).mpr m), rest⟩,
     fun ⟨inside, rest⟩ => ⟨fun i m => inside i ((same i).mp m), rest⟩⟩
 
+/-- A successful active-balance read is the total balance of the checked active indices. -/
+theorem getTotalActiveBalance_ok {state : BeaconState preset fork} {total : Gwei}
+    (computed : getTotalActiveBalance state = .ok total) :
+    getTotalBalance state (getActiveValidatorIndices state (getCurrentEpoch state)) =
+      .ok total := by
+  obtain ⟨indices, checked, computed⟩ := bind_ok_iff.mp computed
+  rw [getActiveValidatorIndicesChecked_ok checked] at computed
+  exact computed
+
 /-- The total active balance never fails on an index: every active index names a validator. -/
 theorem getTotalActiveBalance_ne_indexOutOfRange {state : BeaconState preset fork}
-    (within : state.RegistryWithinLimit) (index : ValidatorIndex) :
+    (index : ValidatorIndex) :
     getTotalActiveBalance state ≠ .error (.indexOutOfRange index) := by
-  have inside : ∀ i ∈ getActiveValidatorIndices state (getCurrentEpoch state),
-      i.toNat < state.validators.data.size := by
-    intro i member
-    obtain ⟨_, found, -⟩ := (mem_getActiveValidatorIndices within).mp member
-    exact (Array.getElem?_eq_some_iff.mp found).1
-  have none : (getActiveValidatorIndices state (getCurrentEpoch state)).find?
-      (state.validators.data.size ≤ ·.toNat) = none := by
-    rw [List.find?_eq_none]
-    intro i member
-    have := inside i member
-    simp
-    omega
-  unfold getTotalActiveBalance getTotalBalance
-  simp only [none]
-  by_cases big : 2 ^ 64 ≤ sumMarked state.validators.data (markIndices state.validators.data.size
-      (getActiveValidatorIndices state (getCurrentEpoch state)))
-  · simp [big, throw, throwThe, MonadExceptOf.throw, bind, Except.bind]
-  · simp [big, pure, Except.pure]
+  unfold getTotalActiveBalance
+  cases checked : getActiveValidatorIndicesChecked state (getCurrentEpoch state) with
+  | error error =>
+    rw [getActiveValidatorIndicesChecked_error checked]
+    simp [bind, Except.bind]
+  | ok indices =>
+    have none : indices.find? (state.validators.data.size ≤ ·.toNat) = none := by
+      rw [List.find?_eq_none]
+      intro i member
+      obtain ⟨_, found, -⟩ := (mem_iff_of_getActiveValidatorIndicesChecked_ok checked).mp member
+      have := (Array.getElem?_eq_some_iff.mp found).1
+      simp
+      omega
+    simp only [bind, Except.bind]
+    unfold getTotalBalance
+    simp only [none]
+    by_cases big : 2 ^ 64 ≤ sumMarked state.validators.data
+        (markIndices state.validators.data.size indices)
+    · simp [big, throw, throwThe, MonadExceptOf.throw, bind, Except.bind]
+    · simp [big, pure, Except.pure]
 
+
+/--
+The previous epoch on natural numbers is the current epoch less one, and zero in the genesis epoch.
+-/
+theorem getPreviousEpoch_toNat (state : BeaconState preset fork) :
+    (getPreviousEpoch state).toNat = (getCurrentEpoch state).toNat - 1 := by
+  unfold getPreviousEpoch saturatingSub
+  split
+  · rename_i lt
+    rw [UInt64.toNat_sub_of_le _ _ (UInt64.le_of_lt lt)]
+    rfl
+  · rename_i notLt
+    rw [UInt64.lt_iff_toNat_lt] at notLt
+    simp only [UInt64.toNat_one] at notLt
+    simp only [UInt64.toNat_zero]
+    omega
+
+/-- The current epoch on natural numbers is the slot divided by the length of an epoch. -/
+theorem getCurrentEpoch_toNat (state : BeaconState preset fork) :
+    (getCurrentEpoch state).toNat = state.slot.toNat / preset.SLOTS_PER_EPOCH.toNat := by
+  simp [getCurrentEpoch, computeEpochAtSlot, UInt64.toNat_div]
+
+/-- With at least two slots in an epoch, the current epoch is never the far future one. -/
+theorem getCurrentEpoch_ne_farFuture (twoSlots : 2 ≤ preset.SLOTS_PER_EPOCH.toNat)
+    (state : BeaconState preset fork) : getCurrentEpoch state ≠ FAR_FUTURE_EPOCH := by
+  intro far
+  have epoch := congrArg UInt64.toNat far
+  rw [getCurrentEpoch_toNat] at epoch
+  have farNat : FAR_FUTURE_EPOCH.toNat = 2 ^ 64 - 1 := rfl
+  have half := Nat.div_le_div_left (a := state.slot.toNat) twoSlots (by decide)
+  have := state.slot.toNat_lt_size
+  simp only [UInt64.size] at this
+  omega
+
+/-- The current epoch is at most the slot, at every length of an epoch. -/
+theorem getCurrentEpoch_toNat_le_slot (state : BeaconState preset fork) :
+    (getCurrentEpoch state).toNat ≤ state.slot.toNat := by
+  rw [getCurrentEpoch_toNat]
+  exact Nat.div_le_self _ _
+
+/-- The epoch after the current one exists when a next slot exists.
+
+A next epoch alone would be enough for a caller that needs only that epoch. -/
+theorem addChecked_getCurrentEpoch_one_total (state : BeaconState preset fork)
+    (fits : state.slot.toNat + 1 < 2 ^ 64) :
+    ∃ next, addChecked (getCurrentEpoch state) 1 = .ok next := by
+  have le := getCurrentEpoch_toNat_le_slot state
+  exact ⟨_, addChecked_of_lt (by simp; omega)⟩
 
 /-- The previous epoch is at most the current epoch. -/
 theorem getPreviousEpoch_le (state : BeaconState preset fork) :
@@ -323,7 +604,7 @@ theorem toNat_length_getActiveValidatorIndices {state : BeaconState preset fork}
 /-- Each slot has at least one committee. -/
 theorem one_le_getCommitteeCountPerSlot (state : BeaconState preset fork) (epoch : Epoch) :
     1 ≤ getCommitteeCountPerSlot state epoch := by
-  simp only [getCommitteeCountPerSlot, max, min]
+  simp only [getCommitteeCountPerSlot, committeeCountOf, max, min]
   repeat' split
   all_goals simp_all [UInt64.le_iff_toNat_le]
   all_goals omega
@@ -331,7 +612,7 @@ theorem one_le_getCommitteeCountPerSlot (state : BeaconState preset fork) (epoch
 /-- A slot has at most the most committees of the preset, or one if that is zero. -/
 theorem getCommitteeCountPerSlot_le (state : BeaconState preset fork) (epoch : Epoch) :
     getCommitteeCountPerSlot state epoch ≤ max 1 preset.MAX_COMMITTEES_PER_SLOT := by
-  simp only [getCommitteeCountPerSlot, max, min]
+  simp only [getCommitteeCountPerSlot, committeeCountOf, max, min]
   repeat' split
   all_goals simp_all [UInt64.le_iff_toNat_le]
   all_goals omega
@@ -344,6 +625,58 @@ theorem count_ne_zero_of_computeCommittee {indices : Array ValidatorIndex} {seed
   cases shuffle : computeShuffledPermutation preset (UInt64.ofNat indices.size) seed <;>
     simp [computeCommittee, shuffledCommittee, shuffle, zero, bind, Except.bind, throw, throwThe,
       MonadExcept.throw, MonadExceptOf.throw] at computed
+
+/-- A successful shuffle uses the checked active indices, and then shuffles their positions. -/
+theorem attesterShuffle_ok {state : BeaconState preset fork} {epoch : Epoch}
+    {active : Array ValidatorIndex} {shuffled : Array UInt64}
+    (computed : attesterShuffle state epoch = .ok (active, shuffled)) :
+    ∃ seed, getSeed state epoch DOMAIN_BEACON_ATTESTER = .ok seed ∧
+      computeShuffledPermutation preset
+        (UInt64.ofNat (getActiveValidatorIndices state epoch).toArray.size) seed = .ok shuffled ∧
+      active = (getActiveValidatorIndices state epoch).toArray := by
+  simp only [attesterShuffle, bind_ok_iff] at computed
+  obtain ⟨seed, seedOk, indices, indicesOk, rest⟩ := computed
+  have same := getActiveValidatorIndicesChecked_ok indicesOk
+  subst indices
+  simp only [liftArith, mapError_ok_iff, pure, Except.pure, Except.ok.injEq,
+    Prod.mk.injEq] at rest
+  obtain ⟨count, countOk, _, shuffleOk, activeEq, rfl⟩ := rest
+  obtain ⟨-, value⟩ := ofNatChecked_ok_iff.mp countOk
+  have same : count = UInt64.ofNat (getActiveValidatorIndices state epoch).toArray.size := by
+    rw [← value, UInt64.ofNat_toNat]
+  subst same
+  exact ⟨seed, seedOk, shuffleOk, activeEq.symm⟩
+
+/-- A successful shuffle has checked every active registry position. -/
+theorem getActiveValidatorIndicesChecked_of_attesterShuffle
+    {state : BeaconState preset fork} {epoch : Epoch}
+    {active : Array ValidatorIndex} {shuffled : Array UInt64}
+    (computed : attesterShuffle state epoch = .ok (active, shuffled)) :
+    getActiveValidatorIndicesChecked state epoch = .ok (getActiveValidatorIndices state epoch) := by
+  simp only [attesterShuffle, bind_ok_iff] at computed
+  obtain ⟨_, _, indices, checked, _⟩ := computed
+  rw [getActiveValidatorIndicesChecked_ok checked] at checked
+  exact checked
+
+/-- A registry within its preset limit has the same checked and pure committee count. -/
+theorem getCommitteeCountPerSlotChecked_of_within {state : BeaconState preset fork}
+    (within : state.RegistryWithinLimit) (epoch : Epoch) :
+    getCommitteeCountPerSlotChecked state epoch = .ok (getCommitteeCountPerSlot state epoch) := by
+  simp [getCommitteeCountPerSlotChecked, getCommitteeCountPerSlot,
+    getActiveValidatorIndicesChecked_of_within within, liftArith,
+    ofNatChecked_of_lt (length_getActiveValidatorIndices_lt within epoch), Except.mapError, bind,
+    Except.bind, pure, Except.pure]
+
+/-- A successful checked count agrees with the pure committee count. -/
+theorem getCommitteeCountPerSlotChecked_ok {state : BeaconState preset fork} {epoch : Epoch}
+    {count : UInt64} (computed : getCommitteeCountPerSlotChecked state epoch = .ok count) :
+    count = getCommitteeCountPerSlot state epoch := by
+  simp only [getCommitteeCountPerSlotChecked, bind_ok_iff, liftArith, mapError_ok_iff, pure,
+    Except.pure, Except.ok.injEq] at computed
+  obtain ⟨active, checked, converted, convertedOk, rfl⟩ := computed
+  obtain rfl := getActiveValidatorIndicesChecked_ok checked
+  obtain ⟨-, value⟩ := ofNatChecked_ok_iff.mp convertedOk
+  rw [getCommitteeCountPerSlot, ← value, Nat.toUInt64_eq, UInt64.ofNat_toNat]
 
 /-- A beacon committee that has a value is one committee cut from the active indices.
 
@@ -362,10 +695,13 @@ theorem getBeaconCommittee_ok {state : BeaconState preset fork} {slot : Slot}
       computeCommittee preset
         (getActiveValidatorIndices state (computeEpochAtSlot preset slot)).toArray seed position
         count = .ok committee := by
-  simp only [getBeaconCommittee, beaconCommitteeOf, bind_ok_iff, liftArith, mapError_ok_iff,
-    Base.Uint64.mulChecked_ok_iff, Base.Uint64.addChecked_ok_iff] at computed
-  obtain ⟨seed, seedOk, shuffled, shuffleOk, position, ⟨product, ⟨_, productEq⟩, _, positionEq⟩,
-    count, ⟨_, countEq⟩, committeeOk⟩ := computed
+  simp only [getBeaconCommittee, bind_ok_iff] at computed
+  obtain ⟨⟨active, shuffled⟩, shuffledOk, rest⟩ := computed
+  obtain ⟨seed, seedOk, shuffleOk, rfl⟩ := attesterShuffle_ok shuffledOk
+  simp only [beaconCommitteeOf, bind_ok_iff, liftArith, mapError_ok_iff,
+    Base.Uint64.mulChecked_ok_iff, Base.Uint64.addChecked_ok_iff] at rest
+  obtain ⟨position, ⟨product, ⟨_, productEq⟩, _, positionEq⟩,
+    count, ⟨_, countEq⟩, committeeOk⟩ := rest
   refine ⟨seed, position, count, seedOk, by rw [positionEq, productEq], countEq, ?_⟩
   rw [computeCommittee, shuffleOk]
   exact committeeOk
@@ -476,6 +812,8 @@ theorem eq_of_mem_getBeaconCommittee {state : BeaconState preset fork}
 
 The committee has a slot of the epoch and an index below the committees of a slot.
 
+The checked read of the active indices of the epoch must succeed.
+
 The seed of the epoch must have a value, and an epoch must have at least one slot.
 
 The slots of the epoch must fit in 64 bits.
@@ -484,6 +822,8 @@ There must be at most `2^40` active validators.
 
 Their number times the number of committees of the epoch must fit in 64 bits. -/
 theorem exists_mem_getBeaconCommittee {state : BeaconState preset fork} {epoch : Epoch}
+    (indicesFit : getActiveValidatorIndicesChecked state epoch =
+      .ok (getActiveValidatorIndices state epoch))
     {seed : Bytes32} (seedOk : getSeed state epoch DOMAIN_BEACON_ATTESTER = .ok seed)
     (positive : preset.SLOTS_PER_EPOCH ≠ 0)
     (slotsFit : (epoch.toNat + 1) * preset.SLOTS_PER_EPOCH.toNat ≤ 2 ^ 64)
@@ -574,9 +914,78 @@ theorem exists_mem_getBeaconCommittee {state : BeaconState preset fork} {epoch :
     (count := UInt64.ofNat (getActiveValidatorIndices state epoch).toArray.size)
     (by rw [activeSize]; simpa using small)
   rw [computeCommittee_of_le (by simpa using small)] at computed
-  simp only [getBeaconCommittee, beaconCommitteeOf, epochEq, seedOk, shuffleOk, activeSize,
-    liftArith, productOk, sumOk, countOk, bind, Except.bind, Except.mapError, positionEq]
+  have lengthOk : ofNatChecked (getActiveValidatorIndices state epoch).toArray.size =
+      .ok (UInt64.ofNat (getActiveValidatorIndices state epoch).toArray.size) := by
+    rw [ofNatChecked_of_lt (Nat.lt_of_le_of_lt (by simpa using small) (by decide)),
+      Nat.toUInt64_eq]
+  simp only [getBeaconCommittee, attesterShuffle, beaconCommitteeOf, epochEq, seedOk, indicesFit,
+    lengthOk, shuffleOk, activeSize, liftArith, productOk, sumOk, countOk, bind, Except.bind,
+    Except.mapError, pure, Except.pure, positionEq]
   rw [computed]
+
+/-- A beacon committee is cut from the shuffle of the epoch of its slot.
+
+The two sides fail with the same error too. -/
+theorem getBeaconCommittee_eq (state : BeaconState preset fork) (slot : Slot)
+    (index : CommitteeIndex) :
+    getBeaconCommittee state slot index = (do
+      let (active, shuffled) ← attesterShuffle state (computeEpochAtSlot preset slot)
+      beaconCommitteeOf preset slot index
+        (getCommitteeCountPerSlot state (computeEpochAtSlot preset slot)) active shuffled) :=
+  rfl
+
+/-- The members of the committees of a slot are those of each committee, one after the other.
+
+The committees of the slot share one shuffle, and each committee alone gives the same members. -/
+theorem slotCommitteeMembers_eq (state : BeaconState preset fork) (slot : Slot) :
+    slotCommitteeMembers state slot =
+      (List.range (getCommitteeCountPerSlot state (computeEpochAtSlot preset slot)).toNat).foldlM
+        (fun members index => return members ++ (← getBeaconCommittee state slot index.toUInt64))
+        #[] := by
+  unfold slotCommitteeMembers slotCommitteeMembersOf
+  have perPos : 0 < (getCommitteeCountPerSlot state (computeEpochAtSlot preset slot)).toNat :=
+    UInt64.le_iff_toNat_le.mp (one_le_getCommitteeCountPerSlot _ _)
+  obtain ⟨n, count⟩ : ∃ n,
+      (getCommitteeCountPerSlot state (computeEpochAtSlot preset slot)).toNat = n + 1 :=
+    ⟨_, (Nat.succ_pred_eq_of_pos perPos).symm⟩
+  cases shuffledOk : attesterShuffle state (computeEpochAtSlot preset slot) with
+  | error e =>
+    rw [count, List.range_succ_eq_map, List.foldlM_cons]
+    simp [getBeaconCommittee, shuffledOk, bind, Except.bind]
+  | ok pair =>
+    simp only [shuffledOk, bind, Except.bind]
+    congr 1
+    funext members index
+    simp [getBeaconCommittee, shuffledOk, bind, Except.bind, pure, Except.pure]
+
+/-- A validator is among the members of a slot exactly when a beacon committee of it holds it. -/
+theorem mem_slotCommitteeMembers {state : BeaconState preset fork} {slot : Slot}
+    {members : Array ValidatorIndex} (found : slotCommitteeMembers state slot = .ok members)
+    {validator : ValidatorIndex} :
+    validator ∈ members ↔
+      ∃ i < (getCommitteeCountPerSlot state (computeEpochAtSlot preset slot)).toNat,
+        ∃ committee, getBeaconCommittee state slot i.toUInt64 = .ok committee ∧
+          validator ∈ committee := by
+  rw [slotCommitteeMembers_eq, foldlM_append_eq_flatten_mapM] at found
+  simp only [bind, Except.bind] at found
+  split at found
+  · cases found
+  rename_i committees mapped
+  simp only [pure, Except.pure, Except.ok.injEq] at found
+  subst found
+  simp only [Array.empty_append, Array.mem_flatten, List.mem_toArray]
+  constructor
+  · rintro ⟨committee, member, holds⟩
+    obtain ⟨i, inRange, made⟩ := mapM_ok_mem mapped committee member
+    exact ⟨i, List.mem_range.mp inRange, committee, made, holds⟩
+  · rintro ⟨i, inRange, committee, made, holds⟩
+    have bound : i < (List.range
+        (getCommitteeCountPerSlot state (computeEpochAtSlot preset slot)).toNat).length := by
+      simpa using inRange
+    have atIndex := mapM_ok_getElem mapped i bound
+    rw [List.getElem_range, made] at atIndex
+    cases atIndex
+    exact ⟨_, List.getElem_mem _, holds⟩
 
 /-- One step of the pass that drops repeats keeps its list decreasing, below the rest. -/
 theorem keepNew_step {kept rest : List ValidatorIndex} {first : ValidatorIndex}
@@ -694,33 +1103,176 @@ theorem mem_of_committeeAttesters {bits : Array Bool} {offset : Nat}
   obtain ⟨member, position, found, -, rfl⟩ := mem
   exact Array.mem_toList_iff.mp (List.mem_of_getElem? found)
 
-/-- From Electra: each attester of a list of committees is active in the epoch of the slot. -/
-theorem mem_of_committeesAttesters {state : BeaconState preset fork} {slot : Slot}
-    {bits : Array Bool} {committees : List CommitteeIndex} {offset : Nat}
-    {attesters : List ValidatorIndex}
-    (computed : committeesAttesters state slot bits committees offset = .ok attesters)
+/-- From Electra: with a shuffle that has a value, each committee of a list is read from the state.
+
+The shuffle is that of the epoch of the slot, with its count of committees per slot.
+
+The attesters of the list are those of the first committee, then those of the rest. -/
+theorem committeesAttestersOf_cons_of_attesterShuffle {state : BeaconState preset fork}
+    {slot : Slot} {active : Array ValidatorIndex} {shuffled : Array UInt64}
+    (shuffleOk : attesterShuffle state (computeEpochAtSlot preset slot) = .ok (active, shuffled))
+    (bits : Array Bool) (index : CommitteeIndex) (rest : List CommitteeIndex) (offset : Nat) :
+    committeesAttestersOf preset slot bits
+        (getCommitteeCountPerSlot state (computeEpochAtSlot preset slot)) active shuffled
+        (index :: rest) offset = (do
+      let committee ← getBeaconCommittee state slot index
+      let here ← committeeAttesters bits offset committee
+      return here ++ (← committeesAttestersOf preset slot bits
+        (getCommitteeCountPerSlot state (computeEpochAtSlot preset slot)) active shuffled rest
+        (offset + committee.size))) := by
+  simp only [committeesAttestersOf, getBeaconCommittee_eq, shuffleOk, bind, Except.bind]
+
+/-- A committee that has a value comes from a shuffle of the epoch of its slot that has one. -/
+theorem attesterShuffle_ok_of_getBeaconCommittee {state : BeaconState preset fork}
+    {slot : Slot} {index : CommitteeIndex} {committee : Array ValidatorIndex}
+    (computed : getBeaconCommittee state slot index = .ok committee) :
+    ∃ active shuffled,
+      attesterShuffle state (computeEpochAtSlot preset slot) = .ok (active, shuffled) := by
+  rw [getBeaconCommittee_eq] at computed
+  cases shuffleOk : attesterShuffle state (computeEpochAtSlot preset slot) with
+  | error e => simp only [shuffleOk, bind, Except.bind] at computed; cases computed
+  | ok pair => exact ⟨pair.1, pair.2, rfl⟩
+
+/-- With a shuffle that has a value, an attestation shows the signers cut from that shuffle.
+
+The shuffle is that of the epoch of its slot, with its count of committees per slot. -/
+theorem getAttestingIndices_of_attesterShuffle {state : BeaconState preset fork}
+    {attestation : Attestation preset fork} {active : Array ValidatorIndex}
+    {shuffled : Array UInt64}
+    (shuffleOk : attesterShuffle state (computeEpochAtSlot preset attestation.data.slot) =
+      .ok (active, shuffled)) :
+    getAttestingIndices state attestation =
+      attestingIndicesOf attestation
+        (getCommitteeCountPerSlot state (computeEpochAtSlot preset attestation.data.slot)) active
+        shuffled := by
+  unfold getAttestingIndices
+  split
+  · rename_i unnamed
+    obtain ⟨electra, empty⟩ := unnamed
+    simp [attestingIndicesOf, electra, empty, committeesAttestersOf, sortedSet, Functor.map,
+      Except.map]
+  · simp only [shuffleOk, bind, Except.bind]
+
+/-- Before Electra, the signers of an attestation are those of its one committee, as a set.
+
+The committee is read from the state. -/
+theorem getAttestingIndices_of_lt_electra (before : fork < .pectra)
+    (state : BeaconState preset fork) (attestation : Attestation preset fork) :
+    getAttestingIndices state attestation = (do
+      let committee ← getBeaconCommittee state attestation.data.slot attestation.data.index
+      return sortedSet (← committeeAttesters attestation.aggregationBits.bits 0 committee)) := by
+  have notElectra : ¬.pectra ≤ fork := Nat.not_le_of_lt before
+  unfold getAttestingIndices attestingIndicesOf
+  split
+  · rename_i unnamed
+    exact absurd unnamed.1 notElectra
+  rw [getBeaconCommittee_eq]
+  cases shuffleOk : attesterShuffle state (computeEpochAtSlot preset attestation.data.slot) with
+  | error e => simp only [shuffleOk, bind, Except.bind]
+  | ok pair => simp only [shuffleOk, bind, Except.bind]
+
+/-- The signers of an attestation are none, or are cut from a shuffle of its epoch with a value.
+
+The shuffle is that of the epoch of its slot, with its count of committees per slot. -/
+theorem getAttestingIndices_ok {state : BeaconState preset fork}
+    {attestation : Attestation preset fork} {attesters : List ValidatorIndex}
+    (computed : getAttestingIndices state attestation = .ok attesters) :
+    attesters = [] ∨ ∃ active shuffled,
+      attesterShuffle state (computeEpochAtSlot preset attestation.data.slot) =
+        .ok (active, shuffled) ∧
+      attestingIndicesOf attestation
+        (getCommitteeCountPerSlot state (computeEpochAtSlot preset attestation.data.slot)) active
+        shuffled = .ok attesters := by
+  cases shuffleOk : attesterShuffle state (computeEpochAtSlot preset attestation.data.slot) with
+  | ok pair =>
+    exact .inr ⟨pair.1, pair.2, rfl, by rw [← getAttestingIndices_of_attesterShuffle shuffleOk,
+      computed]⟩
+  | error e =>
+    unfold getAttestingIndices at computed
+    split at computed
+    · cases computed
+      exact .inl rfl
+    · simp only [shuffleOk, bind, Except.bind] at computed
+      cases computed
+
+/-- Each signer of an attestation sits in one of the committees that the attestation names.
+
+Before Electra that committee has the index of the attestation.
+
+From Electra its index is one of the committee bits, as [EIP-7549] specifies.
+
+[EIP-7549]: https://eips.ethereum.org/EIPS/eip-7549#consensus-layer
+-/
+theorem exists_mem_getBeaconCommittee_of_getAttestingIndices {state : BeaconState preset fork}
+    {attestation : Attestation preset fork} {attesters : List ValidatorIndex}
+    (computed : getAttestingIndices state attestation = .ok attesters)
     {attester : ValidatorIndex} (mem : attester ∈ attesters) :
-    attester ∈ getActiveValidatorIndices state (computeEpochAtSlot preset slot) := by
-  induction committees generalizing offset attesters with
-  | nil =>
+    ∃ index committee,
+      (if electra : .pectra ≤ fork then
+        index ∈ getCommitteeIndices (attestation.committeeBits electra)
+      else index = attestation.data.index) ∧
+      getBeaconCommittee state attestation.data.slot index = .ok committee ∧
+      attester ∈ committee := by
+  rcases getAttestingIndices_ok computed with rfl | ⟨active, shuffled, shuffleOk, computed⟩
+  · simp at mem
+  unfold attestingIndicesOf at computed
+  split at computed
+  · rename_i electra
+    simp only [bind, Except.bind, pure, Except.pure] at computed
+    split at computed
+    · cases computed
+    rename_i listed listedOk
     cases computed
-    simp at mem
-  | cons index rest ih =>
-    simp only [committeesAttesters, bind, Except.bind, pure, Except.pure] at computed
+    -- Each attester of the walk sits in a committee of the list that the walk reads.
+    have walk : ∀ {committees : List CommitteeIndex} {offset : Nat} {listed : List ValidatorIndex},
+        committeesAttestersOf preset attestation.data.slot attestation.aggregationBits.bits
+          (getCommitteeCountPerSlot state (computeEpochAtSlot preset attestation.data.slot))
+          active shuffled committees offset = .ok listed →
+        attester ∈ listed → ∃ index ∈ committees, ∃ committee,
+          getBeaconCommittee state attestation.data.slot index = .ok committee ∧
+          attester ∈ committee := by
+      intro committees
+      induction committees with
+      | nil =>
+        intro offset listed computed mem
+        cases computed
+        simp at mem
+      | cons index rest ih =>
+        intro offset listed computed mem
+        simp only [committeesAttestersOf_cons_of_attesterShuffle shuffleOk, bind, Except.bind,
+          pure, Except.pure] at computed
+        split at computed
+        · cases computed
+        rename_i committee committeeOk
+        split at computed
+        · cases computed
+        rename_i here hereOk
+        split at computed
+        · cases computed
+        rename_i later laterOk
+        cases computed
+        rcases List.mem_append.mp mem with inHere | inLater
+        · exact ⟨index, List.mem_cons_self, committee, committeeOk,
+            mem_of_committeeAttesters hereOk inHere⟩
+        · obtain ⟨other, named, committee, committeeOk, inCommittee⟩ := ih laterOk inLater
+          exact ⟨other, List.mem_cons_of_mem _ named, committee, committeeOk, inCommittee⟩
+    obtain ⟨index, named, committee, committeeOk, inCommittee⟩ :=
+      walk listedOk (mem_sortedSet.mp mem)
+    exact ⟨index, committee, by simpa [electra] using named, committeeOk, inCommittee⟩
+  · rename_i electra
+    simp only [bind, Except.bind, pure, Except.pure] at computed
     split at computed
     · cases computed
     rename_i committee committeeOk
     split at computed
     · cases computed
-    rename_i here hereOk
-    split at computed
-    · cases computed
-    rename_i later laterOk
+    rename_i listed listedOk
     cases computed
-    rcases List.mem_append.mp mem with inHere | inLater
-    · exact mem_getActiveValidatorIndices_of_getBeaconCommittee committeeOk
-        (mem_of_committeeAttesters hereOk inHere)
-    · exact ih laterOk inLater
+    have readOk : getBeaconCommittee state attestation.data.slot attestation.data.index =
+        .ok committee := by
+      simp only [getBeaconCommittee_eq, shuffleOk, bind, Except.bind, committeeOk]
+    exact ⟨_, committee, by simp [electra], readOk,
+      mem_of_committeeAttesters listedOk (mem_sortedSet.mp mem)⟩
 
 /-- Each validator that an attestation shows as a signer is active in the epoch of its slot. -/
 theorem mem_getActiveValidatorIndices_of_getAttestingIndices {state : BeaconState preset fork}
@@ -729,50 +1281,23 @@ theorem mem_getActiveValidatorIndices_of_getAttestingIndices {state : BeaconStat
     {attester : ValidatorIndex} (mem : attester ∈ attesters) :
     attester ∈
       getActiveValidatorIndices state (computeEpochAtSlot preset attestation.data.slot) := by
-  unfold getAttestingIndices at computed
-  split at computed
-  · simp only [bind, Except.bind, pure, Except.pure] at computed
-    split at computed
-    · cases computed
-    rename_i listed listedOk
-    cases computed
-    exact mem_of_committeesAttesters listedOk (mem_sortedSet.mp mem)
-  · simp only [bind, Except.bind, pure, Except.pure] at computed
-    split at computed
-    · cases computed
-    rename_i committee committeeOk
-    split at computed
-    · cases computed
-    rename_i listed listedOk
-    cases computed
-    exact mem_getActiveValidatorIndices_of_getBeaconCommittee committeeOk
-      (mem_of_committeeAttesters listedOk (mem_sortedSet.mp mem))
+  obtain ⟨_, _, -, committeeOk, inCommittee⟩ :=
+    exists_mem_getBeaconCommittee_of_getAttestingIndices computed mem
+  exact mem_getActiveValidatorIndices_of_getBeaconCommittee committeeOk inCommittee
 
 /-- The validators that an attestation shows as signers increase strictly. -/
 theorem getAttestingIndices_sorted {state : BeaconState preset fork}
     {attestation : Attestation preset fork} {attesters : List ValidatorIndex}
     (computed : getAttestingIndices state attestation = .ok attesters) :
     attesters.Pairwise (· < ·) := by
-  unfold getAttestingIndices at computed
+  rcases getAttestingIndices_ok computed with rfl | ⟨_, _, _, computed⟩
+  · exact List.Pairwise.nil
+  unfold attestingIndicesOf at computed
   split at computed <;>
   · simp only [bind, Except.bind, pure, Except.pure] at computed
     repeat' (split at computed; · cases computed)
     cases computed
     exact sortedSet_sorted _
-
-/-- The indices of an indexed attestation increase strictly, as its validity check asks. -/
-theorem getIndexedAttestation_sorted {state : BeaconState preset fork}
-    {attestation : Attestation preset fork} {indexed : IndexedAttestation preset fork}
-    (computed : getIndexedAttestation state attestation = .ok indexed) :
-    indexed.attestingIndices.data.toList.Pairwise (· < ·) := by
-  simp only [getIndexedAttestation, bind, Except.bind] at computed
-  split at computed
-  · cases computed
-  rename_i attesters attestersOk
-  split at computed
-  · cases computed
-    simpa using getAttestingIndices_sorted attestersOk
-  · cases computed
 
 /-- The pass that drops repeats adds at most one index for each index it reads. -/
 theorem length_foldl_keepNew_le (indices kept : List ValidatorIndex) :
@@ -812,10 +1337,11 @@ theorem length_committeeAttesters {bits : Array Bool} {offset : Nat}
   omega
 
 /-- From Electra: the attesters of a list of committees end before the last bit. -/
-theorem length_committeesAttesters {state : BeaconState preset fork} {slot : Slot}
-    {bits : Array Bool} {committees : List CommitteeIndex} {offset : Nat}
-    {attesters : List ValidatorIndex}
-    (computed : committeesAttesters state slot bits committees offset = .ok attesters) :
+theorem length_committeesAttestersOf {slot : Slot} {bits : Array Bool} {perSlot : UInt64}
+    {active : Array ValidatorIndex} {shuffled : Array UInt64}
+    {committees : List CommitteeIndex} {offset : Nat} {attesters : List ValidatorIndex}
+    (computed : committeesAttestersOf preset slot bits perSlot active shuffled committees offset =
+      .ok attesters) :
     offset + attesters.length ≤ max offset bits.size := by
   induction committees generalizing offset attesters with
   | nil =>
@@ -823,7 +1349,7 @@ theorem length_committeesAttesters {state : BeaconState preset fork} {slot : Slo
     simp only [List.length_nil, Nat.add_zero]
     omega
   | cons index rest ih =>
-    simp only [committeesAttesters, bind, Except.bind, pure, Except.pure] at computed
+    simp only [committeesAttestersOf, bind, Except.bind, pure, Except.pure] at computed
     split at computed
     · cases computed
     rename_i committee _
@@ -849,14 +1375,16 @@ theorem length_getAttestingIndices_le {state : BeaconState preset fork}
     {attestation : Attestation preset fork} {attesters : List ValidatorIndex}
     (computed : getAttestingIndices state attestation = .ok attesters) :
     attesters.length ≤ attestation.aggregationBits.bits.size := by
-  unfold getAttestingIndices at computed
+  rcases getAttestingIndices_ok computed with rfl | ⟨_, _, _, computed⟩
+  · exact Nat.zero_le _
+  unfold attestingIndicesOf at computed
   split at computed
   · simp only [bind, Except.bind, pure, Except.pure] at computed
     split at computed
     · cases computed
     rename_i listed listedOk
     cases computed
-    have := length_committeesAttesters listedOk
+    have := length_committeesAttestersOf listedOk
     have := length_sortedSet_le listed
     omega
   · simp only [bind, Except.bind, pure, Except.pure] at computed
@@ -884,7 +1412,7 @@ theorem getIndexedAttestation_eq_error_iff {state : BeaconState preset fork}
     {attestation : Attestation preset fork} {error : AccessorError} :
     getIndexedAttestation state attestation = .error error ↔
       getAttestingIndices state attestation = .error error := by
-  simp only [getIndexedAttestation, bind, Except.bind]
+  simp only [getIndexedAttestation, indexedAttestationOf, bind, Except.bind]
   split
   · rename_i failure
     simp [failure]
@@ -896,6 +1424,30 @@ theorem getIndexedAttestation_eq_error_iff {state : BeaconState preset fork}
       exact absurd (fun before => Nat.le_trans (length_getAttestingIndices_le attestersOk)
         (attestation.aggregationBits.bound before)) over
 
+/-- The signers of an indexed attestation that has a value are the signers of the attestation. -/
+theorem getAttestingIndices_of_getIndexedAttestation {state : BeaconState preset fork}
+    {attestation : Attestation preset fork} {indexed : IndexedAttestation preset fork}
+    (computed : getIndexedAttestation state attestation = .ok indexed) :
+    ∃ attesters, getAttestingIndices state attestation = .ok attesters ∧
+      indexed.attestingIndices.data = attesters.toArray := by
+  simp only [getIndexedAttestation, indexedAttestationOf, bind, Except.bind] at computed
+  split at computed
+  · cases computed
+  rename_i attesters attestersOk
+  split at computed
+  · cases computed
+    exact ⟨attesters, attestersOk, rfl⟩
+  · cases computed
+
+/-- The indices of an indexed attestation increase strictly, as its validity check asks. -/
+theorem getIndexedAttestation_sorted {state : BeaconState preset fork}
+    {attestation : Attestation preset fork} {indexed : IndexedAttestation preset fork}
+    (computed : getIndexedAttestation state attestation = .ok indexed) :
+    indexed.attestingIndices.data.toList.Pairwise (· < ·) := by
+  obtain ⟨attesters, attestersOk, data⟩ := getAttestingIndices_of_getIndexedAttestation computed
+  rw [data]
+  exact getAttestingIndices_sorted attestersOk
+
 /-- When the signers of an attestation have a value, its indexed form lists them in order. -/
 theorem getIndexedAttestation_of_getAttestingIndices {state : BeaconState preset fork}
     {attestation : Attestation preset fork} {attesters : List ValidatorIndex}
@@ -903,7 +1455,7 @@ theorem getIndexedAttestation_of_getAttestingIndices {state : BeaconState preset
     ∃ indexed, getIndexedAttestation state attestation = .ok indexed ∧
       indexed.attestingIndices.data = attesters.toArray ∧ indexed.data = attestation.data ∧
       indexed.signature = attestation.signature := by
-  simp only [getIndexedAttestation, bind, Except.bind, computed]
+  simp only [getIndexedAttestation, indexedAttestationOf, bind, Except.bind, computed]
   split
   · exact ⟨_, rfl, rfl, rfl, rfl⟩
   · rename_i over
@@ -1021,6 +1573,11 @@ theorem mem_getActiveValidatorIndices_of_getBeaconProposerIndex
   simp only [getBeaconProposerIndex, beforeFulu, ↓reduceDIte, bind, Except.bind] at computed
   split at computed
   · cases computed
+  split at computed
+  · cases computed
+  have same := getActiveValidatorIndicesChecked_ok (show
+    getActiveValidatorIndicesChecked state (getCurrentEpoch state) = .ok _ from by assumption)
+  subst same
   simpa using mem_of_computeProposerIndex computed
 
 /-- A domain always has a value. -/
@@ -1067,6 +1624,14 @@ theorem readCircular_writeCircular {α : Type} {n : UInt64} {buffer written : Ve
     cases computed
     simp [readCircular, nonzero]
 
+/-- Two numbers that differ by less than a length lie at different positions modulo it. -/
+theorem _root_.Nat.mod_ne_of_sub_lt {low high length : Nat} (lt : low < high)
+    (close : high - low < length) : high % length ≠ low % length := by
+  intro same
+  have zero := Nat.sub_mod_eq_zero_of_mod_eq same
+  rw [Nat.mod_eq_of_lt close] at zero
+  omega
+
 /-- A write to a circular buffer leaves the entry at every other position unchanged. -/
 theorem readCircular_writeCircular_of_ne {α : Type} {n : UInt64}
     {buffer written : Vector α n.toNat} {i j : UInt64} {value : α}
@@ -1089,5 +1654,141 @@ theorem writeCircularRooted_elements {α : Type} [SszType α] {n : UInt64}
       = writeCircular buffer.elements i value := by
   unfold writeCircularRooted writeCircular
   split <;> rfl
+
+/-- A read of a circular buffer of positive length succeeds. -/
+theorem readCircular_total {α : Type} {n : UInt64} [NeZero n.toNat] (buffer : Vector α n.toNat)
+    (i : UInt64) : ∃ value, readCircular buffer i = .ok value :=
+  ⟨_, by rw [readCircular, dite_eq_right ne_zero_of_neZero_toNat]⟩
+
+/-- A write to a circular buffer of positive length succeeds. -/
+theorem writeCircular_total {α : Type} {n : UInt64} [NeZero n.toNat] (buffer : Vector α n.toNat)
+    (i : UInt64) (value : α) : ∃ written, writeCircular buffer i value = .ok written :=
+  ⟨_, writeCircular_of_ne_zero buffer i value ne_zero_of_neZero_toNat⟩
+
+/-- A write to a circular buffer of positive length that keeps its tree succeeds. -/
+theorem writeCircularRooted_total {α : Type} [SszType α] {n : UInt64} [NeZero n.toNat]
+    (buffer : RootedVector α n.toNat) (i : UInt64) (value : α) :
+    ∃ written, writeCircularRooted buffer i value = .ok written := by
+  simp [writeCircularRooted, ne_zero_of_neZero_toNat (n := n)]
+
+/-- A read of a block root is before the slot of the state, and reads the buffer of roots. -/
+theorem getBlockRootAtSlot_read {state : BeaconState preset fork} {slot : Slot} {root : Root}
+    (computed : getBlockRootAtSlot state slot = .ok root) :
+    slot < state.slot ∧ readCircular state.blockRoots.elements slot = .ok root := by
+  unfold getBlockRootAtSlot at computed
+  by_cases lt : slot < state.slot
+  · simp only [lt, ↓reduceIte, bind_ok_iff] at computed
+    obtain ⟨_, _, computed⟩ := computed
+    split at computed
+    · exact ⟨lt, computed⟩
+    · cases computed
+  · simp only [lt, ↓reduceIte, bind_ok_iff] at computed
+    obtain ⟨_, thrown, _⟩ := computed
+    cases thrown
+
+/-- A read of the root of an epoch is a read of the root at the first slot of the epoch. -/
+theorem getBlockRoot_ok_iff {state : BeaconState preset fork} {epoch : Epoch} {root : Root} :
+    getBlockRoot state epoch = .ok root ↔ ∃ start,
+      computeStartSlotAtEpoch preset epoch = .ok start ∧
+        getBlockRootAtSlot state start = .ok root := by
+  unfold getBlockRoot
+  simp only [bind_ok_iff, liftArith, mapError_ok_iff]
+
+/-- A read of the root of an epoch reads a slot before the slot of the state. -/
+theorem getBlockRoot_start_lt {state : BeaconState preset fork} {epoch : Epoch} {root : Root}
+    (computed : getBlockRoot state epoch = .ok root) :
+    epoch.toNat * preset.SLOTS_PER_EPOCH.toNat < state.slot.toNat := by
+  obtain ⟨start, startOk, read⟩ := getBlockRoot_ok_iff.mp computed
+  rw [← (mulChecked_ok_iff.mp startOk).2]
+  exact UInt64.lt_iff_toNat_lt.mp (getBlockRootAtSlot_read read).1
+
+/-- A read of a recorded root succeeds exactly when the slot is recent and its bound fits.
+
+The read of the buffer must then succeed too. -/
+theorem getBlockRootAtSlot_ok_iff {state : BeaconState preset fork}
+    {slot : Slot} {root : Root} :
+    getBlockRootAtSlot state slot = .ok root ↔ slot.toNat < state.slot.toNat ∧
+      slot.toNat + preset.SLOTS_PER_HISTORICAL_ROOT.toNat < 2 ^ 64 ∧
+      state.slot.toNat ≤ slot.toNat + preset.SLOTS_PER_HISTORICAL_ROOT.toNat ∧
+      readCircular state.blockRoots.elements slot = .ok root := by
+  unfold getBlockRootAtSlot
+  by_cases lt : slot < state.slot
+  · simp only [lt, ↓reduceIte, bind_ok_iff, liftArith, mapError_ok_iff, addChecked_ok_iff]
+    have lt' := UInt64.lt_iff_toNat_lt.mp lt
+    constructor
+    · rintro ⟨bound, ⟨fits, boundEq⟩, rest⟩
+      by_cases within : state.slot ≤ bound
+      · simp only [within, ↓reduceIte] at rest
+        exact ⟨lt', fits, boundEq ▸ UInt64.le_iff_toNat_le.mp within, rest⟩
+      · simp only [within, ↓reduceIte, bind_ok_iff] at rest
+        obtain ⟨_, thrown, _⟩ := rest
+        cases thrown
+    · rintro ⟨-, fits, within, rest⟩
+      have sum : (slot + preset.SLOTS_PER_HISTORICAL_ROOT).toNat =
+          slot.toNat + preset.SLOTS_PER_HISTORICAL_ROOT.toNat := by
+        rw [UInt64.toNat_add, Nat.mod_eq_of_lt fits]
+      refine ⟨slot + preset.SLOTS_PER_HISTORICAL_ROOT, ⟨fits, sum⟩, ?_⟩
+      simp only [UInt64.le_iff_toNat_le.mpr (sum ▸ within), ↓reduceIte]
+      exact rest
+  · have lt' : ¬slot.toNat < state.slot.toNat := fun lt' => lt (UInt64.lt_iff_toNat_lt.mpr lt')
+    simp only [lt, lt', ↓reduceIte, false_and, iff_false]
+    intro computed
+    rw [bind_ok_iff] at computed
+    obtain ⟨_, thrown, _⟩ := computed
+    cases thrown
+
+/-- A read of a recorded root succeeds when the slot is recent and its bound does not overflow.
+
+The buffer of roots must not be empty. -/
+theorem getBlockRootAtSlot_exists {state : BeaconState preset fork}
+    {slot : Slot} (before : slot.toNat < state.slot.toNat)
+    (fits : slot.toNat + preset.SLOTS_PER_HISTORICAL_ROOT.toNat < 2 ^ 64)
+    (within : state.slot.toNat ≤ slot.toNat + preset.SLOTS_PER_HISTORICAL_ROOT.toNat)
+    (nonempty : 0 < preset.SLOTS_PER_HISTORICAL_ROOT.toNat) :
+    ∃ root, getBlockRootAtSlot state slot = .ok root := by
+  have : NeZero preset.SLOTS_PER_HISTORICAL_ROOT.toNat := ⟨Nat.pos_iff_ne_zero.mp nonempty⟩
+  obtain ⟨root, read⟩ := readCircular_total state.blockRoots.elements slot
+  exact ⟨root, getBlockRootAtSlot_ok_iff.mpr ⟨before, fits, within, read⟩⟩
+
+/-- A read of the root of an epoch succeeds when the first slot of the epoch is recent.
+
+The bound of that slot must not overflow. -/
+theorem getBlockRoot_exists {state : BeaconState preset fork} {epoch : Epoch}
+    (before : epoch.toNat * preset.SLOTS_PER_EPOCH.toNat < state.slot.toNat)
+    (fits : epoch.toNat * preset.SLOTS_PER_EPOCH.toNat + preset.SLOTS_PER_HISTORICAL_ROOT.toNat <
+      2 ^ 64)
+    (within : state.slot.toNat ≤
+      epoch.toNat * preset.SLOTS_PER_EPOCH.toNat + preset.SLOTS_PER_HISTORICAL_ROOT.toNat) :
+    ∃ root, getBlockRoot state epoch = .ok root := by
+  obtain ⟨start, startEq⟩ := exists_toNat_eq
+    (n := epoch.toNat * preset.SLOTS_PER_EPOCH.toNat) (by omega)
+  have startOk : computeStartSlotAtEpoch preset epoch = .ok start :=
+    mulChecked_ok_iff.mpr ⟨by omega, startEq⟩
+  obtain ⟨root, read⟩ := getBlockRootAtSlot_exists (state := state) (slot := start)
+    (by omega) (by omega) (by omega) (by omega)
+  exact ⟨root, getBlockRoot_ok_iff.mpr ⟨start, startOk, read⟩⟩
+
+/-- A read of a recorded root succeeds at each slot between two slots where it succeeds. -/
+theorem getBlockRootAtSlot_between {state : BeaconState preset fork}
+    {low middle high : Slot} {lowRoot highRoot : Root}
+    (lowRead : getBlockRootAtSlot state low = .ok lowRoot)
+    (highRead : getBlockRootAtSlot state high = .ok highRoot)
+    (above : low.toNat ≤ middle.toNat) (below : middle.toNat ≤ high.toNat) :
+    ∃ root, getBlockRootAtSlot state middle = .ok root := by
+  obtain ⟨-, -, lowWithin, -⟩ := getBlockRootAtSlot_ok_iff.mp lowRead
+  obtain ⟨highLt, highFits, -, highBuffer⟩ := getBlockRootAtSlot_ok_iff.mp highRead
+  unfold readCircular at highBuffer
+  split at highBuffer
+  · cases highBuffer
+  rename_i nonzero
+  exact getBlockRootAtSlot_exists (by omega) (by omega) (by omega)
+    (Nat.pos_of_ne_zero fun zero => nonzero (UInt64.toNat_inj.mp (by simpa using zero)))
+
+/-- Two states with the same slot and buffer of roots read the same root at each slot. -/
+theorem getBlockRootAtSlot_congr {post : Fork} {state : BeaconState preset fork}
+    {other : BeaconState preset post} (slot : other.slot = state.slot)
+    (roots : other.blockRoots = state.blockRoots) (index : Slot) :
+    getBlockRootAtSlot other index = getBlockRootAtSlot state index := by
+  simp only [getBlockRootAtSlot, slot, roots]
 
 end EthLib.Consensus

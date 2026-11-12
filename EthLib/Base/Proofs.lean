@@ -1,13 +1,18 @@
 module
 
 public import EthLib.Base.Proofs.Address
+public import EthLib.Base.Proofs.Base64
 public import EthLib.Base.Proofs.BigEndian
 public import EthLib.Base.Proofs.BitVec
 public import EthLib.Base.Proofs.Bytes
 public import EthLib.Base.Proofs.ChainConfig
 public import EthLib.Base.Proofs.ExceptT
+public import EthLib.Base.Proofs.FilterM
+public import EthLib.Base.Proofs.FoldlM
 public import EthLib.Base.Proofs.Forall2
 public import EthLib.Base.Proofs.Fork
+public import EthLib.Base.Proofs.GasLimit
+public import EthLib.Base.Proofs.Hex
 public import EthLib.Base.Proofs.LittleEndian
 public import EthLib.Base.Proofs.List
 public import EthLib.Base.Proofs.MapM

@@ -43,7 +43,7 @@ A change of the nonce never deletes the account, so it keeps every storage read.
 
 The deletion of the touched empty accounts reads no account and keeps every storage read.
 
-From Paris, a change that deletes an account also reads each key that the transaction wrote there.
+From Paris, a change that deletes an account clears its written keys and reads them.
 
 The next transaction starts with an empty record of reads.
 
@@ -77,6 +77,15 @@ theorem _root_.EthLib.Execution.State.StateError.code_injective (e₁ e₂ : Sta
 /-- A record of an account read changes no account. -/
 @[simp] theorem getAccount_recordAccountRead (tx : TransactionState) (address other : Address) :
     (tx.recordAccountRead address).getAccount other = tx.getAccount other := rfl
+
+/-- A record of an account read changes no code. -/
+@[simp] theorem getCode_recordAccountRead (tx : TransactionState) (address : Address)
+    (codeHash : Hash32) : (tx.recordAccountRead address).getCode codeHash = tx.getCode codeHash :=
+  rfl
+
+/-- A record of an account read leaves every account alive or dead as it was. -/
+@[simp] theorem isAccountAlive_recordAccountRead (tx : TransactionState) (address other : Address) :
+    (tx.recordAccountRead address).isAccountAlive other = tx.isAccountAlive other := rfl
 
 /-- A record of an account read changes no record of created accounts. -/
 @[simp] theorem createdAccounts_recordAccountRead (tx : TransactionState) (address : Address) :
@@ -303,6 +312,124 @@ theorem getAccount_destroyAccount (tx : TransactionState) (address other : Addre
     rfl
   · rename_i hne
     rw [getAccountOptional_setAccount_of_ne _ _ hne, getAccountOptional_destroyStorage]
+
+/-- The removal of an account leaves no account at its address. -/
+theorem accountExists_destroyAccount_self (tx : TransactionState) (address : Address) :
+    (tx.destroyAccount address).accountExists address = false := by
+  unfold accountExists destroyAccount
+  rw [getAccountOptional_setAccount_self]
+  rfl
+
+/-- The removal of an account does not change whether another address has an account. -/
+theorem accountExists_destroyAccount_of_ne (tx : TransactionState) {address other : Address}
+    (hne : other ≠ address) :
+    (tx.destroyAccount address).accountExists other = tx.accountExists other := by
+  unfold accountExists destroyAccount
+  rw [getAccountOptional_setAccount_of_ne _ _ hne, getAccountOptional_destroyStorage]
+
+/-- The removal of the empty touched accounts leaves no account where there was none. -/
+theorem accountExists_destroyTouchedEmptyAccounts {fork : Fork} {tx : TransactionState}
+    {touched : List Address} {address : Address} (h : tx.accountExists address = false) :
+    (tx.destroyTouchedEmptyAccounts fork touched).accountExists address = false := by
+  unfold destroyTouchedEmptyAccounts
+  split
+  · exact h
+  · induction touched generalizing tx with
+    | nil => exact h
+    | cons removed rest ih =>
+      refine ih ?_
+      dsimp only
+      split
+      · by_cases hne : address = removed
+        · subst hne
+          exact accountExists_destroyAccount_self _ _
+        · rw [accountExists_destroyAccount_of_ne _ hne]
+          exact h
+      · exact h
+
+/-- The removal of the empty touched accounts keeps an account with a nonce above 0. -/
+theorem getAccount_destroyTouchedEmptyAccounts {fork : Fork} {tx : TransactionState}
+    {touched : List Address} {address : Address} (nonce : 1 ≤ (tx.getAccount address).nonce) :
+    (tx.destroyTouchedEmptyAccounts fork touched).getAccount address = tx.getAccount address := by
+  unfold destroyTouchedEmptyAccounts
+  split
+  · rfl
+  · induction touched generalizing tx with
+    | nil => rfl
+    | cons other rest ih =>
+      have step : (if tx.accountExistsAndIsEmpty other then tx.destroyAccount other
+          else tx).getAccount address = tx.getAccount address := by
+        split
+        · rename_i hempty
+          rw [getAccount_destroyAccount]
+          split
+          · rename_i heq
+            subst heq
+            rw [eq_empty_of_accountExistsAndIsEmpty hempty] at nonce
+            simp [EMPTY_ACCOUNT] at nonce
+          · rfl
+        · rfl
+      rw [List.foldl_cons, ih (step ▸ nonce), step]
+
+/-- A key that a storage map holds at an address is a key of the slots at that address. -/
+private theorem mem_keys_of_slot {storage : StorageMap} {address : Address} {key : Bytes32}
+    {value : U256} (h : storage.slot address key = some value) :
+    key ∈ (storage.getD address ∅).keys := by
+  unfold StorageMap.slot at h
+  rw [Option.bind_eq_some_iff] at h
+  obtain ⟨slots, hslots, hkey⟩ := h
+  rw [Std.ExtTreeMap.getD_eq_getD_getElem?, hslots, Option.getD_some, Std.ExtTreeMap.mem_keys,
+    Std.ExtTreeMap.mem_iff_isSome_getElem?, hkey, Option.isSome_some]
+
+/-- The storage of an address holds a word other than zero exactly when some key reads one. -/
+theorem accountHasStorage_eq_true_iff {tx : TransactionState} {address : Address} :
+    tx.accountHasStorage address = true ↔ ∃ key, tx.getStorage address key ≠ 0 := by
+  unfold accountHasStorage
+  simp only [List.any_eq_true, bne_iff_ne, ne_eq]
+  refine ⟨fun ⟨key, _, h⟩ => ⟨key, h⟩, fun ⟨key, h⟩ => ⟨key, ?_, h⟩⟩
+  simp only [List.mem_append]
+  unfold getStorage at h
+  split at h
+  · exact .inl (.inl (mem_keys_of_slot ‹_›))
+  · split at h
+    · exact absurd rfl h
+    · split at h
+      · exact .inl (.inr (mem_keys_of_slot ‹_›))
+      · split at h
+        · exact absurd rfl h
+        · unfold State.getStorage at h
+          cases hslot : StorageMap.slot tx.parent.preState.storage address key with
+          | none => simp [hslot] at h
+          | some value => exact .inr (mem_keys_of_slot hslot)
+
+/-- A contract may be deployed at an address exactly when it has no nonce, code or storage.
+
+Its account has nonce 0 and no code, by EIP-684.
+
+Every key of its storage reads zero, by EIP-7610, at every fork. -/
+theorem accountDeployable_eq_true_iff {tx : TransactionState} {address : Address} :
+    tx.accountDeployable address = true ↔ (tx.getAccount address).nonce = 0 ∧
+      (tx.getAccount address).codeHash = EMPTY_CODE_HASH ∧
+      ∀ key, tx.getStorage address key = 0 := by
+  unfold accountDeployable
+  simp only [Bool.and_eq_true, decide_eq_true_eq, Bool.not_eq_true', and_assoc]
+  rw [← Bool.not_eq_true, accountHasStorage_eq_true_iff]
+  simp
+
+/-- An address where an account can be deployed has nonce 0. -/
+theorem nonce_eq_zero_of_accountDeployable {tx : TransactionState} {address : Address}
+    (h : tx.accountDeployable address = true) : (tx.getAccount address).nonce = 0 :=
+  (accountDeployable_eq_true_iff.mp h).1
+
+/-- Two states agree on whether a contract may be deployed at an address they read alike.
+
+They must have the same account there and the same word at every key of its storage. -/
+theorem accountDeployable_congr {tx tx' : TransactionState} {address : Address}
+    (haccount : tx'.getAccount address = tx.getAccount address)
+    (hstorage : ∀ key, tx'.getStorage address key = tx.getStorage address key) :
+    tx'.accountDeployable address = tx.accountDeployable address := by
+  rw [Bool.eq_iff_iff, accountDeployable_eq_true_iff, accountDeployable_eq_true_iff, haccount]
+  simp only [hstorage]
 
 /-- A change by `f` succeeds exactly when `f` does on the account.
 
@@ -597,6 +724,30 @@ theorem createdAccounts_moveEther {fork : Fork} {tx tx' : TransactionState}
   · simp only [hmid, bind, Except.bind] at h
     rw [createdAccounts_modifyState h, createdAccounts_modifyState hmid]
 
+/-- A write of storage keeps the record of the accounts that the transaction created. -/
+theorem createdAccounts_setStorage {tx tx' : TransactionState} {address : Address}
+    {key : Bytes32} {value : U256} (h : tx.setStorage address key value = .ok tx') :
+    tx'.createdAccounts = tx.createdAccounts := by
+  unfold setStorage at h
+  split at h
+  · cases h
+  · cases h
+    rfl
+
+/-- A new code keeps the record of the accounts that the transaction created. -/
+theorem createdAccounts_setCode {fork : Fork} {tx tx' : TransactionState} {address : Address}
+    {code : ByteArray} (h : tx.setCode fork address code = .ok tx') :
+    tx'.createdAccounts = tx.createdAccounts := by
+  unfold setCode at h
+  rw [createdAccounts_modifyState h]
+  split <;> rfl
+
+/-- A touch of an account keeps the record of the accounts that the transaction created. -/
+theorem createdAccounts_touchAccount (tx : TransactionState) (address : Address) :
+    (tx.touchAccount address).createdAccounts = tx.createdAccounts := by
+  unfold touchAccount
+  split <;> rfl
+
 /-- Moving ether from an address to itself leaves every account reading as it did. -/
 theorem moveEther_self {fork : Fork} {tx tx' : TransactionState} {address : Address}
     {amount : U256} (h : tx.moveEther fork address address amount = .ok tx') :
@@ -663,6 +814,34 @@ theorem getStorage_modifyState {fork : Fork} {tx tx' : TransactionState} {addres
     rw [getStorage_destroyAccount]
     by_cases ho : other = address <;> simp [ho, hnone]
   · simp [getAccountOptional_setAccount_self]
+
+/-- A change of an account keeps its storage when it leaves an account that is not empty.
+
+Before Paris no change deletes an account, so the storage stays whatever the account. -/
+theorem getStorage_modifyState_self {fork : Fork} {tx tx' : TransactionState}
+    {address : Address} {f : Account → Except StateError Account}
+    (h : tx.modifyState fork address f = .ok tx')
+    (hkeep : fork < .paris ∨ tx'.getAccount address ≠ EMPTY_ACCOUNT) (key : Bytes32) :
+    tx'.getStorage address key = tx.getStorage address key := by
+  rw [getStorage_modifyState h]
+  split
+  · rename_i hc
+    exfalso
+    rcases hkeep with hp | hne
+    · obtain ⟨account, hf, -⟩ := modifyState_eq_ok_iff.mp h
+      simp [getAccountOptional_modifyState hp hf h] at hc
+    · exact hne (by simp [getAccount, hc.2])
+  · rfl
+
+/-- Setting the code of an address keeps its storage when it leaves an account that is not empty.
+
+Before Paris it always keeps it. -/
+theorem getStorage_setCode_self {fork : Fork} {tx tx' : TransactionState} {address : Address}
+    {code : ByteArray} (h : tx.setCode fork address code = .ok tx')
+    (hkeep : fork < .paris ∨ tx'.getAccount address ≠ EMPTY_ACCOUNT) (key : Bytes32) :
+    tx'.getStorage address key = tx.getStorage address key := by
+  dsimp only [setCode] at h
+  split at h <;> exact getStorage_modifyState_self h hkeep key
 
 /-- A change of an account changes no code. -/
 theorem getCode_modifyState {fork : Fork} {tx tx' : TransactionState} {address : Address}
@@ -785,6 +964,30 @@ theorem moveEther_balance {fork : Fork} {tx tx' : TransactionState} {sender reci
   simp only [BitVec.toNat_sub_of_le (BitVec.le_def.mpr hle), BitVec.toNat_add,
     Nat.mod_eq_of_lt hfit]
   omega
+
+/-- A move of ether keeps every nonce and every code hash, even from an address to itself. -/
+theorem moveEther_nonce_codeHash {fork : Fork} {tx tx' : TransactionState}
+    {sender recipient : Address} {amount : U256}
+    (h : tx.moveEther fork sender recipient amount = .ok tx') (address : Address) :
+    (tx'.getAccount address).nonce = (tx.getAccount address).nonce ∧
+      (tx'.getAccount address).codeHash = (tx.getAccount address).codeHash := by
+  by_cases hne : sender = recipient
+  · subst hne
+    obtain ⟨hs, hrest⟩ := moveEther_self h
+    by_cases ha : address = sender
+    · rw [ha, hs]
+      exact ⟨rfl, rfl⟩
+    · rw [hrest address ha]
+      exact ⟨rfl, rfl⟩
+  · obtain ⟨-, -, hs, hrec, hrest⟩ := moveEther_eq_ok hne h
+    by_cases ha : address = sender
+    · rw [ha, hs]
+      exact ⟨rfl, rfl⟩
+    · by_cases hb : address = recipient
+      · rw [hb, hrec]
+        exact ⟨rfl, rfl⟩
+      · rw [hrest address ha hb]
+        exact ⟨rfl, rfl⟩
 
 /-- Moving ether between two addresses fails exactly in two cases, each with its error.
 
@@ -1054,6 +1257,16 @@ theorem reads_setStorage {tx tx' : TransactionState} {address : Address} {key : 
   · cases h
     exact ⟨rfl, rfl⟩
 
+/-- A written account exists, so it is empty exactly when it is the empty account. -/
+private theorem accountExistsAndIsEmpty_setAccount_self (tx : TransactionState)
+    (address : Address) (account : Account) :
+    (tx.setAccount address (some account)).accountExistsAndIsEmpty address =
+      decide (account = EMPTY_ACCOUNT) := by
+  simp only [accountExistsAndIsEmpty, getAccountOptional_setAccount_self]
+  cases account
+  simp only [EMPTY_ACCOUNT, Account.mk.injEq, Bool.decide_and]
+  ac_rfl
+
 /-- A change by `f` that succeeds adds the address to the account reads.
 
 From Paris, a result of `f` that is the empty account deletes the account.
@@ -1075,14 +1288,7 @@ theorem reads_modifyState {fork : Fork} {tx tx' : TransactionState} {address : A
   | ok account =>
     refine ⟨account, rfl, ?_⟩
     simp only [hf, bind, Except.bind, pure, Except.pure] at h
-    -- The written account exists, so it is empty exactly when it is the empty account.
-    have hempty : ((tx.recordAccountRead address).setAccount address
-        (some account)).accountExistsAndIsEmpty address = decide (account = EMPTY_ACCOUNT) := by
-      simp only [accountExistsAndIsEmpty, getAccountOptional_setAccount_self]
-      cases account
-      simp only [EMPTY_ACCOUNT, Account.mk.injEq, Bool.decide_and]
-      ac_rfl
-    rw [hempty] at h
+    rw [accountExistsAndIsEmpty_setAccount_self] at h
     split at h <;> cases h
     · rename_i hcond
       simp only [Bool.and_eq_true, decide_eq_true_eq] at hcond
@@ -1110,6 +1316,151 @@ theorem getElem?_storageReads_modifyState_of_ne {fork : Fork} {tx tx' : Transact
   · simp [destroyStorage, Std.ExtTreeMap.getElem?_insert, Ne.symm hne]
   · rfl
 
+/-- A second wipe of the storage of an address records no new read. -/
+theorem storageReads_destroyStorage_destroyStorage (tx : TransactionState) (address : Address) :
+    ((tx.destroyStorage address).destroyStorage address).storageReads =
+      (tx.destroyStorage address).storageReads := by
+  apply Std.ExtTreeMap.ext_getElem?
+  intro other
+  by_cases hother : other = address
+  · subst hother
+    simp [destroyStorage, Std.ExtTreeMap.keys_eq_nil_iff.mpr rfl, Std.ExtTreeSet.insertMany_nil]
+  · simp [destroyStorage, Std.ExtTreeMap.getElem?_insert, Ne.symm hother]
+
+/-- Two states with the same storage writes and reads at an address keep them equal after a wipe. -/
+theorem getElem?_storageReads_destroyStorage_congr {tx tx' : TransactionState}
+    {address : Address} (hw : tx'.storageWrites.getD address ∅ = tx.storageWrites.getD address ∅)
+    (hr : tx'.storageReads[address]? = tx.storageReads[address]?) :
+    (tx'.destroyStorage address).storageReads[address]? =
+      (tx.destroyStorage address).storageReads[address]? := by
+  simp [destroyStorage, hw, Std.ExtTreeMap.getD_eq_getD_getElem?, hr]
+
+/-- A wipe adds no read when the address has no written key and the reads of an earlier wipe. -/
+theorem getElem?_storageReads_destroyStorage_of_wiped {tx mid : TransactionState}
+    {address : Address} (hw : mid.storageWrites.getD address ∅ = ∅)
+    (hr : mid.storageReads[address]? = (tx.destroyStorage address).storageReads[address]?) :
+    (mid.destroyStorage address).storageReads[address]? =
+      (tx.destroyStorage address).storageReads[address]? := by
+  rw [getElem?_storageReads_destroyStorage_congr (tx := tx.destroyStorage address)
+    (hw.trans (by simp [destroyStorage])) hr, storageReads_destroyStorage_destroyStorage]
+
+/-- A change of an account that succeeds gives the storage reads at that address.
+
+From Paris, an empty result deletes the account and turns its written keys into reads.
+
+Otherwise the storage reads at the address stay as they were. -/
+theorem getElem?_storageReads_modifyState_self {fork : Fork} {tx tx' : TransactionState}
+    {address : Address} {f : Account → Except StateError Account}
+    (h : tx.modifyState fork address f = .ok tx') :
+    tx'.storageReads[address]? =
+      if fork ≥ .paris ∧ tx'.getAccount address = EMPTY_ACCOUNT then
+        (tx.destroyStorage address).storageReads[address]?
+      else tx.storageReads[address]? := by
+  obtain ⟨account, hf, rfl, -⟩ := modifyState_eq_ok h
+  obtain ⟨account', hf', -, hreads⟩ := reads_modifyState h
+  rw [hf, Except.ok.injEq] at hf'
+  subst hf'
+  rw [hreads]
+  split <;> rfl
+
+/-- A change of an account that succeeds keeps the storage writes at every other address. -/
+theorem getD_storageWrites_modifyState_of_ne {fork : Fork} {tx tx' : TransactionState}
+    {address other : Address} {f : Account → Except StateError Account} (hne : other ≠ address)
+    (h : tx.modifyState fork address f = .ok tx') :
+    tx'.storageWrites.getD other ∅ = tx.storageWrites.getD other ∅ := by
+  obtain ⟨_, -, rfl⟩ := modifyState_eq_ok_iff.mp h
+  split
+  · simp [destroyAccount, setAccount, destroyStorage, Std.ExtTreeMap.getD_erase, Ne.symm hne,
+      recordAccountRead]
+  · rfl
+
+/-- From Paris, a change of an account that deletes it clears its storage writes.
+
+Otherwise the storage writes at that address stay as they were. -/
+theorem getD_storageWrites_modifyState_self {fork : Fork} {tx tx' : TransactionState}
+    {address : Address} {f : Account → Except StateError Account}
+    (h : tx.modifyState fork address f = .ok tx') :
+    tx'.storageWrites.getD address ∅ =
+      if fork ≥ .paris ∧ tx'.getAccount address = EMPTY_ACCOUNT then ∅
+      else tx.storageWrites.getD address ∅ := by
+  obtain ⟨account, hf, hread, -⟩ := modifyState_eq_ok h
+  rw [hread]
+  obtain ⟨account', hf', rfl⟩ := modifyState_eq_ok_iff.mp h
+  rw [hf, Except.ok.injEq] at hf'
+  subst hf'
+  rw [accountExistsAndIsEmpty_setAccount_self]
+  split
+  · rename_i hc
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
+    rw [ite_eq_left_of_eq_true _ _ (eq_true hc)]
+    simp [destroyAccount, setAccount, destroyStorage]
+  · rename_i hc
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
+    rw [ite_eq_right_of_eq_false _ _ (eq_false hc)]
+    rfl
+
+/-- Two changes of accounts in sequence give the storage reads at every address.
+
+From Paris, an address that either change leaves empty has its earlier written keys read.
+
+Otherwise they keep the storage reads at that address. -/
+theorem getElem?_storageReads_modifyState_modifyState {fork : Fork}
+    {tx mid tx' : TransactionState} {address other : Address}
+    {f g : Account → Except StateError Account}
+    (h1 : tx.modifyState fork address f = .ok mid)
+    (h2 : mid.modifyState fork other g = .ok tx') (z : Address) :
+    tx'.storageReads[z]? =
+      if fork ≥ .paris ∧ ((z = address ∧ mid.getAccount address = EMPTY_ACCOUNT) ∨
+          (z = other ∧ tx'.getAccount other = EMPTY_ACCOUNT)) then
+        (tx.destroyStorage z).storageReads[z]?
+      else tx.storageReads[z]? := by
+  by_cases hz2 : z = other
+  · subst hz2
+    rw [getElem?_storageReads_modifyState_self h2]
+    by_cases hz1 : z = address
+    · subst hz1
+      by_cases hp : fork ≥ .paris
+      · by_cases he1 : mid.getAccount z = EMPTY_ACCOUNT
+        · have hw : mid.storageWrites.getD z ∅ = ∅ := by
+            rw [getD_storageWrites_modifyState_self h1]
+            simp [hp, he1]
+          have hr : mid.storageReads[z]? = (tx.destroyStorage z).storageReads[z]? := by
+            rw [getElem?_storageReads_modifyState_self h1]
+            simp [hp, he1]
+          have hd : (mid.destroyStorage z).storageReads[z]? =
+              (tx.destroyStorage z).storageReads[z]? :=
+            getElem?_storageReads_destroyStorage_of_wiped hw hr
+          by_cases he2 : tx'.getAccount z = EMPTY_ACCOUNT <;> simp [hp, he1, he2, hd, hr]
+        · have hw : mid.storageWrites.getD z ∅ = tx.storageWrites.getD z ∅ := by
+            rw [getD_storageWrites_modifyState_self h1]
+            simp [hp, he1]
+          have hr : mid.storageReads[z]? = tx.storageReads[z]? := by
+            rw [getElem?_storageReads_modifyState_self h1]
+            simp [hp, he1]
+          have hd : (mid.destroyStorage z).storageReads[z]? =
+              (tx.destroyStorage z).storageReads[z]? :=
+            getElem?_storageReads_destroyStorage_congr hw hr
+          by_cases he2 : tx'.getAccount z = EMPTY_ACCOUNT <;> simp [hp, he1, he2, hd, hr]
+      · rw [getElem?_storageReads_modifyState_self h1]
+        simp [hp]
+    · have hw : mid.storageWrites.getD z ∅ = tx.storageWrites.getD z ∅ :=
+        getD_storageWrites_modifyState_of_ne hz1 h1
+      have hr : mid.storageReads[z]? = tx.storageReads[z]? :=
+        getElem?_storageReads_modifyState_of_ne hz1 h1
+      have hd : (mid.destroyStorage z).storageReads[z]? =
+          (tx.destroyStorage z).storageReads[z]? :=
+        getElem?_storageReads_destroyStorage_congr hw hr
+      by_cases hp : fork ≥ .paris <;> by_cases he2 : tx'.getAccount z = EMPTY_ACCOUNT <;>
+        simp [hp, hz1, he2, hd, hr]
+  · rw [getElem?_storageReads_modifyState_of_ne hz2 h2]
+    by_cases hz1 : z = address
+    · subst hz1
+      rw [getElem?_storageReads_modifyState_self h1]
+      by_cases hp : fork ≥ .paris <;> by_cases he1 : mid.getAccount z = EMPTY_ACCOUNT <;>
+        simp [hp, hz2, he1]
+    · rw [getElem?_storageReads_modifyState_of_ne hz1 h1]
+      simp [hz1, hz2]
+
 /-- A move of ether that succeeds adds the sender and the recipient to the account reads.
 
 It keeps the storage reads of every other address.
@@ -1133,6 +1484,72 @@ theorem reads_moveEther {fork : Fork} {tx tx' : TransactionState} {sender recipi
         getElem?_storageReads_modifyState_of_ne hs hmid]
     · rw [storageReads_modifyState_of_lt_paris hfork h,
         storageReads_modifyState_of_lt_paris hfork hmid]
+
+/-- A move of ether gives the storage reads at every address.
+
+From Paris, an address that the debit or the credit leaves empty has its written keys read.
+
+Every other address keeps its storage reads, and before Paris every address keeps them. -/
+theorem getElem?_storageReads_moveEther {fork : Fork} {tx tx' : TransactionState}
+    {sender recipient : Address} {amount : U256}
+    (h : tx.moveEther fork sender recipient amount = .ok tx') (address : Address) :
+    tx'.storageReads[address]? =
+      if fork ≥ .paris ∧
+          ((address = sender ∧
+              { tx.getAccount sender with balance := (tx.getAccount sender).balance - amount } =
+                EMPTY_ACCOUNT) ∨
+            (address = recipient ∧ tx'.getAccount recipient = EMPTY_ACCOUNT)) then
+        (tx.destroyStorage address).storageReads[address]?
+      else tx.storageReads[address]? := by
+  unfold moveEther at h
+  rcases modifyState_debit fork tx sender amount with
+    ⟨-, hmid⟩ | ⟨-, mid, hmid, hsender, -⟩
+  · simp [hmid, bind, Except.bind] at h
+  · simp only [hmid, bind, Except.bind] at h
+    rw [getElem?_storageReads_modifyState_modifyState hmid h address, hsender]
+
+/-- From Paris, a move of ether clears the storage writes of an address that it deletes.
+
+It keeps the storage writes at every other address. -/
+theorem getD_storageWrites_moveEther {fork : Fork} {tx tx' : TransactionState}
+    {sender recipient : Address} {amount : U256}
+    (h : tx.moveEther fork sender recipient amount = .ok tx') (address : Address) :
+    tx'.storageWrites.getD address ∅ =
+      if fork ≥ .paris ∧
+          ((address = sender ∧
+              { tx.getAccount sender with balance := (tx.getAccount sender).balance - amount } =
+                EMPTY_ACCOUNT) ∨
+            (address = recipient ∧ tx'.getAccount recipient = EMPTY_ACCOUNT)) then ∅
+      else tx.storageWrites.getD address ∅ := by
+  unfold moveEther at h
+  rcases modifyState_debit fork tx sender amount with
+    ⟨-, hmid⟩ | ⟨-, mid, hmid, hsender, -⟩
+  · simp [hmid, bind, Except.bind] at h
+  · simp only [hmid, bind, Except.bind] at h
+    by_cases hra : address = recipient
+    · subst hra
+      rw [getD_storageWrites_modifyState_self h]
+      by_cases hsa : address = sender
+      · subst hsa
+        rw [getD_storageWrites_modifyState_self hmid, hsender]
+        by_cases hp : fork ≥ .paris <;>
+          by_cases he1 : { tx.getAccount address with
+              balance := (tx.getAccount address).balance - amount } = EMPTY_ACCOUNT <;>
+          by_cases he2 : tx'.getAccount address = EMPTY_ACCOUNT <;>
+          simp [hp, he1, he2]
+      · rw [getD_storageWrites_modifyState_of_ne hsa hmid]
+        by_cases hp : fork ≥ .paris <;> by_cases he2 : tx'.getAccount address = EMPTY_ACCOUNT <;>
+          simp [hp, hsa, he2]
+    · rw [getD_storageWrites_modifyState_of_ne hra h]
+      by_cases hsa : address = sender
+      · subst hsa
+        rw [getD_storageWrites_modifyState_self hmid, hsender]
+        by_cases hp : fork ≥ .paris <;>
+          by_cases he1 : { tx.getAccount address with
+              balance := (tx.getAccount address).balance - amount } = EMPTY_ACCOUNT <;>
+          simp [hp, hra, he1]
+      · rw [getD_storageWrites_modifyState_of_ne hsa hmid]
+        simp [hsa, hra]
 
 /-- A write of an account keeps the account reads and the storage reads. -/
 theorem reads_setAccount (tx : TransactionState) (address : Address) (account : Option Account) :
@@ -1226,17 +1643,6 @@ theorem reads_setCode {fork : Fork} {tx tx' : TransactionState} {address : Addre
   have := reads_modifyState_eq_insert h
   -- The code goes into the store of codes, which holds no read.
   split at this <;> exact this
-
-/-- A second wipe of the storage of an address records no new read. -/
-theorem storageReads_destroyStorage_destroyStorage (tx : TransactionState) (address : Address) :
-    ((tx.destroyStorage address).destroyStorage address).storageReads =
-      (tx.destroyStorage address).storageReads := by
-  apply Std.ExtTreeMap.ext_getElem?
-  intro other
-  by_cases hother : other = address
-  · subst hother
-    simp [destroyStorage, Std.ExtTreeMap.keys_eq_nil_iff.mpr rfl, Std.ExtTreeSet.insertMany_nil]
-  · simp [destroyStorage, Std.ExtTreeMap.getElem?_insert, Ne.symm hother]
 
 /-- Clearing an account adds the address to the account reads.
 
@@ -1448,6 +1854,14 @@ theorem getAccountOptional_applyChanges (block : BlockState) (address : Address)
     by_cases hk : k = k' <;> cases v <;> simp_all [Std.ExtTreeMap.getElem?_erase,
       Std.ExtTreeMap.getElem?_insert]
 
+/-- A block that starts from the state after a block reads each account as that block does. -/
+theorem getAccount_applyChanges (block : BlockState) (address : Address) :
+    (TransactionState.ofBlock ⟨block.applyChanges, ∅, ∅, ∅, ∅⟩).getAccount address =
+      (TransactionState.ofBlock block).getAccount address := by
+  unfold TransactionState.getAccount
+  rw [← getAccountOptional_applyChanges block address]
+  simp [TransactionState.getAccountOptional, TransactionState.ofBlock]
+
 /-- After a block, each code reads as it does at the start of a transaction of the block. -/
 theorem getCode_applyChanges (block : BlockState) (codeHash : Hash32) :
     block.applyChanges.getCode codeHash = (TransactionState.ofBlock block).getCode codeHash := by
@@ -1522,6 +1936,13 @@ theorem getAccountOptional_incorporateTxIntoBlock (tx : TransactionState) (addre
   · cases tx.accountWrites[address]? <;> rfl
   · intro acc k v k'
     by_cases hk : k = k' <;> simp_all [Std.ExtTreeMap.getElem?_insert]
+
+/-- The block that a transaction joins reads each account as the transaction left it. -/
+theorem getAccount_ofBlock_incorporateTxIntoBlock (tx : TransactionState) (address : Address) :
+    (ofBlock tx.incorporateTxIntoBlock.parent).getAccount address = tx.getAccount address := by
+  unfold getAccount
+  rw [← getAccountOptional_incorporateTxIntoBlock tx address]
+  rfl
 
 /-- After the end of a transaction, each code reads as it did in the transaction. -/
 theorem getCode_incorporateTxIntoBlock (tx : TransactionState) (codeHash : Hash32) :

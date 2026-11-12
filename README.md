@@ -4,7 +4,8 @@
 > It is not affiliated with, reviewed by or endorsed by the Ethereum Foundation or the EthLib maintainers.
 > Report problems with this fork here, not upstream.
 
-EmbeddedEthLib is EthLib at upstream commit [`0b028a98`](https://github.com/ethereum/EthLib/commit/0b028a9871fe92acfaad8d7d5842bc305edb24e4), with its full history and its CC0 licence, plus faster compiled code for 32-bit embedded targets such as the Cortex-M33 of an STM32U585.
+EmbeddedEthLib is EthLib, with its full history and its CC0 licence, plus faster compiled code for 32-bit embedded targets such as the Cortex-M33 of an STM32U585.
+It was forked at upstream commit [`0b028a98`](https://github.com/ethereum/EthLib/commit/0b028a9871fe92acfaad8d7d5842bc305edb24e4) and last merged from upstream at [`7d898f4d`](https://github.com/ethereum/EthLib/commit/7d898f4d9ccd86b224b1b9e922b82dffc65d2a40).
 What is different:
 
 - **Fast compiled forms, each proved equal to EthLib's own definition.** SHA-256, Keccak-f[1600] and Keccak-256, leanSPHINCS signing, the leanSPHINCS tweakable hash, and byte-slice reads have fast forms. A `@[csimp]` theorem, which the kernel checks like any other, installs each one, so the compiled code runs the fast form while every proof still reasons about the readable specification. No definition or theorem statement of EthLib changes; the fork adds modules, theorems and imports.

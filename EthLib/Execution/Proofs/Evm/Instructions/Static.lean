@@ -106,70 +106,79 @@ theorem stateKept_recordStorageRead (evm : Evm fork Meter) (address : Address) (
 
 It keeps its message, its code and the block of its state.
 
-It also keeps the touched accounts of its substate. -/
+It also keeps the touched accounts and the accounts to delete of its substate.
+
+It keeps the created accounts of its state. -/
 structure StaticStep (before after : Evm fork Meter) : Prop where
   state : StateKept before after
   message : after.message = before.message
   code : after.code = before.code
   parent : after.state.parent = before.state.parent
   touched : after.substate.touchedAccounts = before.substate.touchedAccounts
+  toDelete : after.substate.accountsToDelete = before.substate.accountsToDelete
+  created : after.state.createdAccounts = before.state.createdAccounts
 
 omit [GasMeter Meter] in
 /-- A frame keeps its state and message. -/
 theorem StaticStep.refl (evm : Evm fork Meter) : StaticStep evm evm :=
-  ⟨StateKept.refl _, rfl, rfl, rfl, rfl⟩
+  ⟨StateKept.refl _, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 omit [GasMeter Meter] in
 /-- Two steps that each keep the state and the message keep them together. -/
 theorem StaticStep.trans {a b c : Evm fork Meter} (hab : StaticStep a b) (hbc : StaticStep b c) :
     StaticStep a c :=
   ⟨hab.state.trans hbc.state, hbc.message.trans hab.message, hbc.code.trans hab.code,
-    hbc.parent.trans hab.parent, hbc.touched.trans hab.touched⟩
+    hbc.parent.trans hab.parent, hbc.touched.trans hab.touched,
+    hbc.toDelete.trans hab.toDelete, hbc.created.trans hab.created⟩
 
 omit [GasMeter Meter] in
 /-- A step that keeps the message, the state and the substate is a static step. -/
 theorem StaticStep.of_sameContext {a b : Evm fork Meter} (h : SameContext a b) : StaticStep a b :=
-  ⟨StateKept.of_sameContext h, h.message, h.code, by rw [h.state], by rw [h.substate]⟩
+  ⟨StateKept.of_sameContext h, h.message, h.code, by rw [h.state], by rw [h.substate],
+    by rw [h.substate], by rw [h.state]⟩
 
 omit [GasMeter Meter] in
 /-- A change of the memory is a static step. -/
 theorem StaticStep.withMemory (evm : Evm fork Meter) (memory : ByteArray) :
-    StaticStep evm { evm with memory } := ⟨StateKept.refl _, rfl, rfl, rfl, rfl⟩
+    StaticStep evm { evm with memory } := ⟨StateKept.refl _, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 omit [GasMeter Meter] in
 /-- A move of the program counter is a static step. -/
 theorem StaticStep.advance {a b : Evm fork Meter} (h : StaticStep a b) (n : Nat := 1) :
-    StaticStep a (Evm.advance b n) := ⟨h.state, h.message, h.code, h.parent, h.touched⟩
+    StaticStep a (Evm.advance b n) :=
+  ⟨h.state, h.message, h.code, h.parent, h.touched, h.toDelete, h.created⟩
 
 omit [GasMeter Meter] in
 /-- A record of the read of an account is a static step. -/
 theorem staticStep_recordAccountRead (evm : Evm fork Meter) (address : Address) :
     StaticStep evm (recordAccountRead evm address) :=
-  ⟨stateKept_recordAccountRead evm address, rfl, rfl, rfl, rfl⟩
+  ⟨stateKept_recordAccountRead evm address, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 omit [GasMeter Meter] in
 /-- A record of the read of a storage key is a static step. -/
 theorem staticStep_recordStorageRead (evm : Evm fork Meter) (address : Address) (key : Bytes32) :
     StaticStep evm (recordStorageRead evm address key) :=
-  ⟨stateKept_recordStorageRead evm address key, rfl, rfl, rfl, rfl⟩
+  ⟨stateKept_recordStorageRead evm address key, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 omit [GasMeter Meter] in
 /-- An access to an address is a static step. -/
 theorem staticStep_accessAddress (evm : Evm fork Meter) (address : Address) :
     StaticStep evm (accessAddress evm address).2 := by
   obtain ⟨_, h⟩ := accessAddress_snd evm address
-  exact ⟨stateKept_accessAddress evm address, by rw [h], by rw [h], by rw [h], by rw [h]⟩
+  exact ⟨stateKept_accessAddress evm address, by rw [h], by rw [h], by rw [h], by rw [h],
+    by rw [h], by rw [h]⟩
 
 omit [GasMeter Meter] in
 /-- An access to a storage key is a static step. -/
 theorem staticStep_accessStorageKey (evm : Evm fork Meter) (address : Address) (key : Bytes32) :
     StaticStep evm (accessStorageKey evm address key).2 := by
   obtain ⟨_, h⟩ := accessStorageKey_snd evm address key
-  exact ⟨stateKept_accessStorageKey evm address key, by rw [h], by rw [h], by rw [h], by rw [h]⟩
+  exact ⟨stateKept_accessStorageKey evm address key, by rw [h], by rw [h], by rw [h], by rw [h],
+    by rw [h], by rw [h]⟩
 
 /-- An exceptional halt is a static step. -/
 theorem staticStep_exceptionalHalt (evm : Evm fork Meter) (e : EvmError) :
-    StaticStep evm (exceptionalHalt evm e) := ⟨StateKept.refl _, rfl, rfl, rfl, rfl⟩
+    StaticStep evm (exceptionalHalt evm e) := ⟨StateKept.refl _, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- BALANCE is a static step. -/
 theorem staticStep_balanceStep {evm after : Evm fork Meter} (h : balanceStep evm = .ok after) :
@@ -335,15 +344,21 @@ theorem staticStep_storageStep_of_isStatic {op : Op}
   case sload => subst hstep; exact staticStep_sloadStep h
   case sstore => subst hstep; exact staticStep_sstoreStep_of_isStatic static h
 
-/-- SELFDESTRUCT in a static frame is a static step.
+/-- A successful step of SELFDESTRUCT reads its beneficiary at the top of the stack.
 
-Before Glamsterdam it halts the frame with its reads.
+It then reaches a frame whose state is that of the step's start with the beneficiary read.
 
-From Glamsterdam it fails before any read. -/
-theorem staticStep_selfdestructStep_of_isStatic {evm after : Evm fork Meter}
-    (static : evm.message.isStatic = true) (h : selfdestructStep fork evm = .ok after) :
-    StaticStep evm after := by
-  unfold selfdestructStep at h
+That frame keeps the error of the start.
+
+From that frame, it either ends SELFDESTRUCT with some refund, or halts with an error. -/
+theorem selfdestructStep_eq_ok {evm after : Evm fork Meter}
+    (h : selfdestructStep fork evm = .ok after) :
+    ∃ word rest paid, evm.stack.val = word :: rest ∧ StaticStep evm paid ∧
+      paid.state = evm.state.recordAccountRead (toAddressMasked word) ∧
+      paid.error = evm.error ∧
+      ((∃ refund, finishSelfdestruct fork (toAddressMasked word) refund paid = .ok after) ∨
+        ∃ error, after = exceptionalHalt paid error) := by
+  unfold Evm.selfdestructStep at h
   by_cases hs : fork ≥ .glamsterdam ∧ evm.message.isStatic = true
   · simp only [hs, and_self, ↓reduceIte] at h
     cases h
@@ -352,21 +367,54 @@ theorem staticStep_selfdestructStep_of_isStatic {evm after : Evm fork Meter}
   dsimp only at h
   rcases hacc : accessAddress e1 (toAddressMasked w) with ⟨cold, e2⟩
   simp only [hacc] at h
-  have ha : StaticStep e1 e2 := by
-    have := staticStep_accessAddress e1 (toAddressMasked w)
-    rwa [hacc] at this
+  have ha := staticStep_accessAddress e1 (toAddressMasked w)
+  rw [hacc] at ha
   obtain ⟨_, -, h⟩ := Base.bind_ok_iff.mp h
-  have c := ((StaticStep.of_sameContext (popWord_sameContext h1)).trans ha).trans
-    (staticStep_recordAccountRead e2 (toAddressMasked w))
+  have c : StaticStep evm (recordAccountRead e2 (toAddressMasked w)) :=
+    ((StaticStep.of_sameContext (popWord_sameContext h1)).trans ha).trans
+      (staticStep_recordAccountRead _ _)
+  have stack := (popWord_eq_ok h1).1
+  -- Popping the word and warming the address keep the state and the error.
+  have s2 : e2.state = evm.state ∧ e2.error = evm.error := by
+    obtain ⟨_, ha⟩ := accessAddress_snd e1 (toAddressMasked w)
+    rw [hacc] at ha
+    dsimp only at ha
+    rw [ha]
+    obtain ⟨⟨_, _⟩, -, h1⟩ := Base.bind_ok_iff.mp h1
+    cases h1
+    exact ⟨rfl, rfl⟩
+  have read : (recordAccountRead e2 (toAddressMasked w)).state =
+      evm.state.recordAccountRead (toAddressMasked w) := by
+    rw [← s2.1]
+    rfl
   rcases keepReads_eq_ok h with h | ⟨e, rfl⟩
   · obtain ⟨e3, h3, h⟩ := Base.bind_ok_iff.mp h
     obtain ⟨e4, h4, h⟩ := Base.bind_ok_iff.mp h
-    have m4 : e4.message = evm.message := by
-      rw [(chargeStateGas_sameContext h4).message, (chargeGas_sameContext h3).message]
-      exact c.message
-    unfold finishSelfdestruct at h
-    simp [m4, static] at h
-  · exact c.trans (staticStep_exceptionalHalt _ _)
+    have err : e4.error = e2.error := by
+      obtain ⟨_, -, h3⟩ := Base.bind_ok_iff.mp h3
+      obtain ⟨_, -, h4⟩ := Base.bind_ok_iff.mp h4
+      cases h3
+      cases h4
+      rfl
+    have c4 := (chargeGas_sameContext h3).trans (chargeStateGas_sameContext h4)
+    exact ⟨w, _, e4, stack, c.trans (.of_sameContext c4), c4.state.trans read,
+      err.trans s2.2, .inl ⟨_, h⟩⟩
+  · exact ⟨w, _, _, stack, c, read, s2.2, .inr ⟨e, rfl⟩⟩
+
+/-- SELFDESTRUCT in a static frame is a static step.
+
+Before Glamsterdam it halts the frame with its reads.
+
+From Glamsterdam it fails before any read. -/
+theorem staticStep_selfdestructStep_of_isStatic {evm after : Evm fork Meter}
+    (static : evm.message.isStatic = true) (h : selfdestructStep fork evm = .ok after) :
+    StaticStep evm after := by
+  obtain ⟨word, rest, paid, stack, hpaid, -, -, ⟨refund, finished⟩ | halted⟩ :=
+    selfdestructStep_eq_ok h
+  · unfold finishSelfdestruct at finished
+    simp [hpaid.message, static] at finished
+  · obtain ⟨error, rfl⟩ := halted
+    exact hpaid.trans (staticStep_exceptionalHalt _ _)
 
 /-- Each instruction of transient storage is a static step in a static frame. -/
 theorem staticStep_transientStorageStep_of_isStatic {op : Op}

@@ -11,13 +11,17 @@ public import EthLib.Consensus.Proofs.Time
 
 Each validator that a balance-weighted selection draws is one of its candidates.
 
-So each member of a payload committee sits on an attestation committee of its slot.
+So each member of a payload committee sits on a beacon committee of its slot.
 
 The indexed form of a vote lists the members whose bit is set, sorted, with any repeats.
 
 After the window is initialized, the state reads the computed committee of each slot it covers.
 
 The covered slots are those of the current epoch and of the lookahead.
+
+Initializing the window shares the seeds and the shuffle of each epoch among its committees.
+
+It gives what each committee alone gives, errors included.
 
 Moving the window shifts every committee back by one epoch.
 
@@ -103,52 +107,7 @@ theorem mem_of_computeBalanceWeightedSelection {state : BeaconState preset fork}
   · simp [empty, fits, bind, Except.bind, throw, throwThe, MonadExcept.throw,
       MonadExceptOf.throw] at computed
 
-/-- A slot has at least one attestation committee. -/
-theorem getCommitteeCountPerSlot_pos (state : BeaconState preset fork) (epoch : Epoch) :
-    0 < (getCommitteeCountPerSlot state epoch).toNat := by
-  have atLeastOne : ∀ x : UInt64, 0 < (max 1 x).toNat := by
-    intro x
-    simp only [max]
-    split
-    · rename_i le
-      rw [UInt64.le_iff_toNat_le] at le
-      simp only [UInt64.toNat_one] at le
-      exact le
-    · simp
-  exact atLeastOne _
-
-/-- The members of the committees of a slot are those of each committee, one after the other.
-
-The committees of the slot share one shuffle, and each committee alone gives the same members. -/
-theorem slotCommitteeMembers_eq (state : BeaconState preset fork) (slot : Slot) :
-    slotCommitteeMembers state slot =
-      (List.range (getCommitteeCountPerSlot state (computeEpochAtSlot preset slot)).toNat).foldlM
-        (fun members index => return members ++ (← getBeaconCommittee state slot index.toUInt64))
-        #[] := by
-  unfold slotCommitteeMembers attesterShuffle slotCommitteeMembersOf
-  -- The first committee reads the same seed and shuffle, so a failure of either is on both sides.
-  obtain ⟨n, count⟩ : ∃ n,
-      (getCommitteeCountPerSlot state (computeEpochAtSlot preset slot)).toNat = n + 1 :=
-    ⟨_, (Nat.succ_pred_eq_of_pos (getCommitteeCountPerSlot_pos _ _)).symm⟩
-  cases seedOk : getSeed state (computeEpochAtSlot preset slot) DOMAIN_BEACON_ATTESTER with
-  | error e =>
-    rw [count, List.range_succ_eq_map, List.foldlM_cons]
-    simp [getBeaconCommittee, seedOk, bind, Except.bind]
-  | ok seed =>
-    cases shuffleOk : computeShuffledPermutation preset
-        (UInt64.ofNat (getActiveValidatorIndices state (computeEpochAtSlot preset slot)).length)
-        seed with
-    | error e =>
-      rw [count, List.range_succ_eq_map, List.foldlM_cons]
-      simp [getBeaconCommittee, seedOk, shuffleOk, bind, Except.bind, Except.mapError]
-    | ok shuffled =>
-      simp only [seedOk, List.size_toArray, shuffleOk, Except.mapError, bind, Except.bind, pure,
-        Except.pure]
-      congr 1
-      funext members index
-      simp [getBeaconCommittee, seedOk, shuffleOk, bind, Except.bind, Except.mapError]
-
-/-- Each member of the payload committee of a slot is on an attestation committee of the slot. -/
+/-- Each member of the payload committee of a slot is on a beacon committee of the slot. -/
 theorem mem_of_computePtc {state : BeaconState preset fork} {slot : Slot}
     {committee : PayloadTimelinessCommittee preset}
     (computed : computePtc state slot = .ok committee) :
@@ -211,24 +170,34 @@ theorem processPayloadAttestation_eq {config : Config} {checks : SignatureChecks
   obtain ⟨_, _, _, _, _, _, _, _, _, _, same⟩ := computed
   exact same.symm
 
+/-- A slot computed at a position is in the first epoch plus the position over the epoch length.
+
+The epoch length must be positive. -/
+theorem computeEpochAtSlot_ptcWindowSlot_eq_add {epoch : Epoch} {position : Nat} {slot : Slot}
+    (positive : 0 < preset.SLOTS_PER_EPOCH.toNat)
+    (computed : ptcWindowSlot preset epoch position = .ok slot) :
+    computeEpochAtSlot preset slot =
+      epoch + (position / preset.SLOTS_PER_EPOCH.toNat).toUInt64 := by
+  simp only [ptcWindowSlot, liftArith, mapError_ok_iff, bind_ok_iff, addChecked_ok_iff,
+    computeStartSlotAtEpoch, mulChecked_ok_iff] at computed
+  obtain ⟨later, ⟨fits, laterNat⟩, start, ⟨_, startNat⟩, _, slotNat⟩ := computed
+  have rest := Nat.mod_lt position positive
+  have smallRest : position % preset.SLOTS_PER_EPOCH.toNat < 2 ^ 64 :=
+    Nat.lt_trans rest preset.SLOTS_PER_EPOCH.toNat_lt
+  rw [Nat.toUInt64_eq, UInt64.toNat_ofNat', Nat.mod_eq_of_lt smallRest] at slotNat
+  apply UInt64.toNat_inj.mp
+  rw [computeEpochAtSlot, UInt64.toNat_div, slotNat, startNat, Nat.add_comm,
+    Nat.add_mul_div_right _ _ positive, Nat.div_eq_of_lt rest, Nat.zero_add, laterNat,
+    toNat_add_of_lt fits]
+
 /-- A position of the window within its first epoch names a slot of that epoch. -/
 theorem computeEpochAtSlot_ptcWindowSlot {epoch : Epoch} {position : Nat} {slot : Slot}
     (first : position < preset.SLOTS_PER_EPOCH.toNat)
     (computed : ptcWindowSlot preset epoch position = .ok slot) :
     computeEpochAtSlot preset slot = epoch := by
-  simp only [ptcWindowSlot, liftArith, mapError_ok_iff, bind_ok_iff, addChecked_ok_iff,
-    computeStartSlotAtEpoch, mulChecked_ok_iff] at computed
-  obtain ⟨same, ⟨_, sameNat⟩, start, ⟨_, startNat⟩, _, slotNat⟩ := computed
-  have smallPosition : position < 2 ^ 64 :=
-    Nat.lt_trans first preset.SLOTS_PER_EPOCH.toNat_lt
-  rw [Nat.div_eq_of_lt first, Nat.toUInt64_eq, UInt64.toNat_ofNat', Nat.zero_mod,
-    Nat.add_zero] at sameNat
-  rw [Nat.mod_eq_of_lt first, Nat.toUInt64_eq, UInt64.toNat_ofNat',
-    Nat.mod_eq_of_lt smallPosition] at slotNat
-  apply UInt64.toNat_inj.mp
-  have positive : 0 < preset.SLOTS_PER_EPOCH.toNat := Nat.lt_of_le_of_lt (Nat.zero_le _) first
-  rw [computeEpochAtSlot, UInt64.toNat_div, slotNat, startNat, sameNat, Nat.add_comm,
-    Nat.add_mul_div_right _ _ positive, Nat.div_eq_of_lt first, Nat.zero_add]
+  rw [computeEpochAtSlot_ptcWindowSlot_eq_add (Nat.lt_of_le_of_lt (Nat.zero_le _) first)
+    computed, Nat.div_eq_of_lt first]
+  exact UInt64.add_zero epoch
 
 /-- Moving the window computes each new committee as the committee of its slot.
 
@@ -384,6 +353,48 @@ theorem ptcWindowPosition_of_le {config : Config} {state : BeaconState preset fo
   simp [ptcWindowPosition, forkEpoch, notBefore, liftArith, lastOk, within, plusOneOk,
     offsetOk, positionOk, bind, Except.bind, Except.mapError]
 
+/-- Initializing the window computes each committee after the previous epoch as that of its slot.
+
+The committees of an epoch share its two seeds, its shuffle and its count of committees per slot.
+
+Sharing them changes no committee and no error. -/
+theorem initializePtcWindow_eq (state : BeaconState preset fork) :
+    initializePtcWindow state =
+      (RootedVector.ofVector <$> (Vector.range _).mapM fun position => do
+        let perEpoch := preset.SLOTS_PER_EPOCH.toNat
+        if position < perEpoch then return Vector.replicate _ 0
+        computePtc state
+          (← ptcWindowSlot preset (getCurrentEpoch state) (position - perEpoch))) := by
+  unfold initializePtcWindow
+  refine congrArg (RootedVector.ofVector <$> ·) (vector_mapM_congr fun position inRange => ?_)
+  simp only [Vector.getElem_range]
+  by_cases before : position < preset.SLOTS_PER_EPOCH.toNat
+  · simp only [before, ↓reduceIte]
+  simp only [before, ↓reduceIte, bind, Except.bind]
+  split
+  · rfl
+  rename_i slot computed
+  have positive : 0 < preset.SLOTS_PER_EPOCH.toNat :=
+    Nat.pos_of_ne_zero fun zero => by simp [zero] at inRange
+  split
+  · rename_i shared found
+    obtain ⟨_, rfl⟩ := Array.getElem?_eq_some_iff.mp found
+    -- The slot is in the epoch of those inputs, so its committee reads the same seeds and shuffle.
+    have epoch := computeEpochAtSlot_ptcWindowSlot_eq_add positive computed
+    simp only [Array.getElem_map, Array.getElem_range, computePtc, ← epoch]
+    cases getSeed state (computeEpochAtSlot preset slot) DOMAIN_PTC_ATTESTER <;>
+      cases attesterShuffle state (computeEpochAtSlot preset slot) <;> rfl
+  -- The window ends with the last epoch of the lookahead, so every position finds its inputs.
+  · rename_i found
+    rw [Array.getElem?_eq_none_iff, Array.size_map, Array.size_range,
+      ← Nat.not_lt, Nat.div_lt_iff_lt_mul positive] at found
+    have sizes : (preset.MIN_SEED_LOOKAHEAD.toNat + 2) * preset.SLOTS_PER_EPOCH.toNat =
+        (preset.MIN_SEED_LOOKAHEAD.toNat + 1) * preset.SLOTS_PER_EPOCH.toNat +
+          preset.SLOTS_PER_EPOCH.toNat := by
+      rw [Nat.add_mul, Nat.add_mul]
+      omega
+    omega
+
 /-- After the window is initialized, the state reads the computed committee of a slot.
 
 The slot must be from the fork, in the current epoch or the lookahead.
@@ -403,7 +414,7 @@ theorem getPtc_initializePtcWindow {config : Config} {state : BeaconState preset
     getPtc config { state with ptcWindow := fun _ => window } gloas slot =
       computePtc state slot := by
   -- The window is the vector of computed committees, with its tree.
-  unfold initializePtcWindow at initialized
+  rw [initializePtcWindow_eq] at initialized
   obtain ⟨committees, mapped, rfl⟩ := map_ok_iff.mp initialized
   obtain ⟨position, positionOk, positionNat⟩ :=
     ptcWindowPosition_of_le (state := state) positive forkEpoch current lookahead fits windowFits

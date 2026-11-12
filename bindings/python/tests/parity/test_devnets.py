@@ -1,7 +1,5 @@
 """The cases of the execution-spec-tests devnets that the pinned release lacks."""
 
-from pathlib import Path
-
 import pytest
 
 import archives
@@ -12,22 +10,9 @@ CASES = (
     {suite: catalogue.devnet_cases(suite) for suite in catalogue.DEVNETS} if archives.CACHE else {}
 )
 
-
-def unpack(suite: str) -> Path:
-    """The archive of a devnet, with the files of its runnable cases unpacked."""
-    # Most cases of a devnet run in the pinned release, so whole directories would waste the disk.
-    # A case of the format blockchain_test_engine_x also reads the shared states of its format.
-    runnable = harness.runnable(CASES[suite])
-    paths = {case.path for case in runnable} | {
-        "/".join(case.path.split("/")[:2]) + "/pre_alloc"
-        for case in runnable
-        if case.group == "blockchain_test_engine_x"
-    }
-    return archives.unpack(catalogue.DEVNETS[suite], *sorted(paths)) if paths else archives.CACHE
-
-
-ROOTS = {suite: unpack(suite) for suite in CASES}
-DISAGREEMENTS = {suite: harness.disagreements(suite) for suite in catalogue.DEVNETS}
+# Most cases of a devnet run in the pinned release, so only the files of the others are unpacked.
+ROOTS = {suite: harness.unpack_read(catalogue.DEVNETS[suite], CASES[suite]) for suite in CASES}
+DISAGREEMENTS = {suite: archives.disagreements(suite) for suite in catalogue.DEVNETS}
 
 pytestmark = pytest.mark.archive
 
@@ -35,7 +20,7 @@ pytestmark = pytest.mark.archive
 @pytest.mark.parametrize(
     "case",
     [case for cases in CASES.values() for case in harness.in_shard(cases)],
-    ids=lambda case: f"{case.suite}:{case.id}",
+    ids=lambda case: harness.case_id(case.suite, case.id, case.group),
 )
 def test_case(case, request, record_property) -> None:
     harness.run(ROOTS[case.suite], case, DISAGREEMENTS[case.suite], request, record_property)

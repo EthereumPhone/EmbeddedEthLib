@@ -158,6 +158,9 @@
 #define DOC_trie_hex_prefix \
   "The hex-prefix encoding of a path of nibbles, for a leaf or an extension."
 
+#define DOC_trie_verify_range \
+  "Check a range of the trie of a 32-byte root from a 32-byte start, with Keccak-256."
+
 #define DOC_trie_verify_account_proof \
   "Check an answer of `eth_getProof` against a 32-byte state root, with Keccak-256."
 
@@ -169,6 +172,9 @@
 
 #define DOC_vrf_evaluate \
   "The output at index `i` of the tree of a seed."
+
+#define DOC_vrf_mix \
+  "An output mixed with randomness: the value a selection compares with its threshold."
 
 #define DOC_crc32 \
   "The four digest bytes of CRC-32: the highest power of each byte at its least significant bit."
@@ -221,6 +227,45 @@
 #define DOC_scrypt \
   "Expand, mix and compress the password, RFC 7914 §6, with the output length in bytes."
 
+#define DOC_x25519 \
+  "X25519 scalar multiplication of two 32-byte inputs, RFC 7748 §5."
+
+#define DOC_x25519_public_key \
+  "X25519 public key at Montgomery coordinate 9, RFC 7748 §6.1."
+
+#define DOC_chacha20_quarter_round \
+  "The four-word quarter round, RFC 8439 §2.1."
+
+#define DOC_chacha20_quarter_round_state \
+  "A quarter round on a 64-byte state at four indices, RFC 8439 §2.2."
+
+#define DOC_chacha20_block \
+  "The 64-byte ChaCha20 block at a 32-bit counter, RFC 8439 §2.3."
+
+#define DOC_chacha20_crypt \
+  "ChaCha20 encryption or decryption without counter wrap, RFC 8439 §2.4."
+
+#define DOC_poly1305 \
+  "Poly1305 with a 32-byte one-time key, RFC 8439 §2.5."
+
+#define DOC_poly1305_key \
+  "Derive a Poly1305 key from ChaCha20 block zero, RFC 8439 §2.6."
+
+#define DOC_chacha20_poly1305_encrypt \
+  "Encrypt and authenticate, returning ciphertext and a separate tag, RFC 8439 §2.8."
+
+#define DOC_chacha20_poly1305_decrypt \
+  "Authenticate before returning plaintext, RFC 8439 §2.8."
+
+#define DOC_keystore_nfkd \
+  "Unicode 16.0.0 Normalization Form KD, UAX #15 rev. 56, §1.3."
+
+#define DOC_keystore_password \
+  "NFKD, control removal and UTF-8 encoding, ERC-2335 \"Password requirements\"."
+
+#define DOC_keystore_decrypt \
+  "Decrypt an ERC-2335 JSON keystore and return its secret octets."
+
 #define DOC_secp256k1_verify \
   "Whether `(r, s)` is a valid signature on `hash` under the public key `q`, by SEC 1 v2 §4.1.4."
 
@@ -244,6 +289,42 @@
 
 #define DOC_enr_from_text \
   "The record of a text form."
+
+#define DOC_noise_initialize \
+  "Initialize the raw XX state with explicit private keys and prologue, Noise §5.3."
+
+#define DOC_noise_write_message \
+  "Write the next raw XX message and return the updated state, Noise §5.3."
+
+#define DOC_noise_read_message \
+  "Read the next raw XX message and return its payload and updated state, Noise §5.3."
+
+#define DOC_noise_transport \
+  "Split a completed raw XX state into its send cipher, receive cipher and hash."
+
+#define DOC_noise_cipher_encrypt \
+  "Encrypt with a cipher state and associated data, returning its next state, Noise §5.1."
+
+#define DOC_noise_cipher_decrypt \
+  "Authenticate and decrypt, advancing the nonce only on success, Noise §5.1."
+
+#define DOC_noise_frame \
+  "Prefix the 16-bit big-endian message length, noise-libp2p \"Wire Format\"."
+
+#define DOC_noise_unframe \
+  "Read exactly one complete 16-bit frame, noise-libp2p \"Wire Format\"."
+
+#define DOC_noise_libp2p_initialize \
+  "Initialize libp2p XX with explicit X25519 private keys and an empty prologue."
+
+#define DOC_noise_libp2p_write \
+  "Write the next libp2p message with a signed identity payload."
+
+#define DOC_noise_libp2p_read \
+  "Read the next libp2p message, and authenticate the static key of message 2 or 3."
+
+#define DOC_noise_libp2p_complete \
+  "Return the authenticated peer and transport keys only after completion."
 
 #define DOC_enr_seq \
   "The sequence number of a record."
@@ -332,11 +413,26 @@
 #define DOC_consensus_compute_columns_for_custody_group \
   "The columns of a custody group, as a list."
 
+#define DOC_consensus_get_custody_column_bits \
+  "The columns that a node custodies, one bit per column, as the bytes of an SSZ bitvector."
+
 #define DOC_consensus_ssz_static \
   "The root of the value that the bytes encode, and the bytes of that value, as a pair."
 
+#define DOC_consensus_is_valid_builder_signature \
+  "Whether the signature of a signed message of the Builder API verifies."
+
+#define DOC_consensus_verify_builder_request_auth_signature \
+  "Whether a proposer key signed a Gloas request authentication given in SSZ."
+
+#define DOC_consensus_builder_bid_value \
+  "The value of a builder's bid from its two payments and the proposer's execution payment cap."
+
 #define DOC_consensus_merkle_proof \
   "The node at a generalized index of the value that the bytes encode, and its branch, as a pair."
+
+#define DOC_consensus_upgrade_operation \
+  "The root and the bytes of the Gloas form of a container of Fulu, as a pair."
 
 #define DOC_consensus_verify_blob_sidecar_inclusion_proof \
   "Whether the branch of a blob sidecar, given as bytes, climbs to the body root of its header."
@@ -373,6 +469,33 @@
 
 #define DOC_consensus_is_valid_genesis_state \
   "Whether a candidate genesis state launches the chain."
+
+#define DOC_consensus_deposit_tree_new \
+  "The tree with no deposit."
+
+#define DOC_consensus_deposit_tree_push_leaf \
+  "The tree with one more deposit, by the root of its data."
+
+#define DOC_consensus_deposit_tree_push_leaves \
+  "The tree after pushing deposits in order, by the roots of their data."
+
+#define DOC_consensus_deposit_tree_get_root \
+  "The deposit root of a tree."
+
+#define DOC_consensus_deposit_tree_finalize \
+  "The tree finalized at deposit data, given as its root, count and block hash, and a height."
+
+#define DOC_consensus_deposit_tree_get_proof \
+  "The leaf at an index of a tree, and its proof against the deposit root."
+
+#define DOC_consensus_deposit_tree_get_snapshot \
+  "The snapshot of a finalized tree."
+
+#define DOC_consensus_deposit_tree_from_snapshot \
+  "The tree rebuilt from a snapshot."
+
+#define DOC_consensus_deposit_tree_snapshot_calculate_root \
+  "The deposit root that the finalized roots and the count of a snapshot compute."
 
 #define DOC_consensus_compute_weak_subjectivity_period \
   "The weak subjectivity period of a state, in epochs."
@@ -426,7 +549,7 @@
   "An interchange file as the format writes it again, from its JSON text."
 
 #define DOC_consensus_import_slashing_interchange \
-  "The record of a signer that keeps every message, after it imports a file, as JSON text."
+  "The record after importing a file with the minimal strategy of EIP-3076, as JSON text."
 
 #define DOC_consensus_check_block_signing \
   "Whether a key may sign a block of a slot with a signing root, given a record."
@@ -454,6 +577,12 @@
 
 #define DOC_consensus_on_invalidated_payload \
   "From Bellatrix: the optimistic roots after a block is found the first invalid one, as a list."
+
+#define DOC_consensus_is_optimistic_node \
+  "From Bellatrix: whether a node is optimistic, after a run of fork choice steps."
+
+#define DOC_consensus_inclusion_list_satisfaction \
+  "From Heze: the answers on the inclusion lists after a run of fork choice steps."
 
 #define DOC_consensus_is_optimistic_restricted_domain \
   "Whether an optimistic validator may not sign under a domain type of 4 bytes."
@@ -518,6 +647,15 @@
 #define DOC_consensus_create_light_client_update \
   "The update that a full node serves for a block, from the blocks and their post states."
 
+#define DOC_consensus_light_client_update_as \
+  "The SSZ bytes of a light client update, or of its finality or optimistic update."
+
+#define DOC_consensus_light_client_gossip_full_node \
+  "The outcomes of light client messages at a full node, in turn."
+
+#define DOC_consensus_light_client_gossip_light_client \
+  "The outcomes of light client messages at a light client, in turn."
+
 #define DOC_consensus_compute_fork_digest \
   "The fork digest at an epoch, on the chain with the given root of the genesis validators."
 
@@ -573,7 +711,7 @@
   "The root of the message that the bytes encode, and the bytes of that message, as a pair."
 
 #define DOC_consensus_compute_min_epochs_for_block_requests \
-  "The fewest epochs back from the current one over which a node must serve blocks."
+  "The fewest epochs back from the current one over which a node must serve blocks, at a fork."
 
 #define DOC_consensus_gossip_topics \
   "The gossip topics of a fork, in the order of the fork that adds each one."
@@ -583,6 +721,9 @@
 
 #define DOC_consensus_reqresp_response_bounds \
   "The smallest and the largest length of the payload of a successful response chunk, as a pair."
+
+#define DOC_consensus_reqresp_response_valid \
+  "Whether a response is valid for its request, as a Boolean."
 
 #define DOC_consensus_gossip_topic_bound \
   "The largest length of the payload of a gossip topic at a fork."
@@ -779,6 +920,18 @@
 #define DOC_snap_full_account \
   "The full RLP form of an account in slim form."
 
+#define DOC_snap_verify_account_range \
+  "Check the accounts of an AccountRange answer, from a root and a start of 32 bytes each."
+
+#define DOC_snap_verify_storage_ranges \
+  "Check the ranges of a StorageRanges answer, against the storage roots of the request."
+
+#define DOC_era1_decode \
+  "The contents of an era1 file, as plain values."
+
+#define DOC_era_decode \
+  "The name of the file and its groups, as plain values."
+
 #define DOC_snappy_decompress \
   "The bytes a Snappy block decompresses to, or why it is not a valid block."
 
@@ -803,11 +956,50 @@
 #define DOC_varint_decode \
   "The 64-bit value a varint denotes, or why it is not a valid varint."
 
+#define DOC_uvarint_encode \
+  "The unsigned varint of a value below `2^63`."
+
+#define DOC_uvarint_decode \
+  "The value of the unsigned varint at the start of the bytes, and the bytes after it."
+
+#define DOC_multistream_encode \
+  "The bytes of one multistream-select message: its length, its bytes, then a newline."
+
+#define DOC_multistream_decode \
+  "The multistream-select message at the start of the bytes, and the bytes after it."
+
+#define DOC_mplex_encode \
+  "The bytes of a valid mplex frame."
+
+#define DOC_mplex_decode \
+  "The mplex frame at the start of the bytes, and the bytes after it."
+
+#define DOC_yamux_encode \
+  "The bytes of a valid yamux frame."
+
+#define DOC_yamux_decode \
+  "The yamux frame at the start of the bytes, and the bytes after it."
+
+#define DOC_libp2p_public_key \
+  "The public-key protobuf of a 32-byte big-endian secp256k1 secret in [1, n)."
+
+#define DOC_libp2p_peer_id \
+  "The peer ID of a canonical secp256k1 key protobuf."
+
+#define DOC_libp2p_decode_peer_id \
+  "The key protobuf that a binary secp256k1 peer ID names."
+
 #define DOC_gossip_message_id \
   "The message ID of a message on a topic of a fork: the first 20 bytes of a SHA-256 digest."
 
 #define DOC_gossip_decode_payload \
   "The SSZ bytes of the data of a gossip message, given the size bound of its SSZ type."
+
+#define DOC_gossip_rpc_decode \
+  "The RPC that the bytes encode, under the `StrictNoSign` policy."
+
+#define DOC_gossip_rpc_encode \
+  "The bytes of an RPC."
 
 #define DOC_receipt_reencode \
   "The bytes of a receipt, decoded at the fork and encoded again with its transaction type."
@@ -908,17 +1100,38 @@
 #define DOC_engine_new_payload \
   "The payload status of an `engine_newPayload` request, without the parent's state."
 
+#define DOC_engine_jwt_build \
+  "Build an HS256 Engine token from a 32-byte secret and an issued-at time in seconds."
+
+#define DOC_engine_jwt_check \
+  "Accept an HS256 Engine token only within 60 seconds of its issued-at time."
+
 #define DOC_engine_new_payload_on_chain \
   "The payload status of an `engine_newPayload` request, on a chain that holds the parent."
 
+#define DOC_engine_build_payload \
+  "Build a payload on a chain, from attributes, the builder's choices and transactions."
+
 #define DOC_engine_forkchoice_updated \
   "The response to an `engine_forkchoiceUpdated` request, against a tree of payloads."
+
+#define DOC_engine_get_blobs \
+  "The answer to an `engine_getBlobs` request, from a blob pool."
+
+#define DOC_engine_get_payload \
+  "The answer to an `engine_getPayload` request, from the configuration and a store snapshot."
+
+#define DOC_engine_get_payload_bodies \
+  "The answer to a payload bodies request, from a store of bodies."
 
 #define DOC_engine_prepare_execution_payload \
   "From Bellatrix to Fulu: the forkchoice update of a proposer, as the value of its JSON."
 
 #define DOC_engine_prepare_execution_payload_gloas \
   "From Gloas: the forkchoice update of a proposer, as the value of its JSON."
+
+#define DOC_engine_finalized_execution_block_hash \
+  "From Bellatrix: the 32 bytes of the finalized block hash of a store."
 
 #define DOC_pyvalue_echo \
   "The value that Python passes, back to Python, with each failure tuple read as a failure."

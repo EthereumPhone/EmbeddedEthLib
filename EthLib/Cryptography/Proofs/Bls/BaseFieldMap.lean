@@ -178,6 +178,11 @@ theorem map_isOne (f : Hom F G) (a : Fp12 F) : (map f a).isOne = a.isOne := by
 theorem map_square (f : Hom F G) (a : Fp12 F) : map f a.square = (map f a).square := by
   simp only [square, map_mul]
 
+theorem map_cyclotomicSquare (f : Hom F G) (a : Fp12 F) :
+    map f a.cyclotomicSquare = (map f a).cyclotomicSquare := by
+  simp only [cyclotomicSquare, map, Fp6.map, Fp2.map_add, Fp2.map_sub, Fp2.map_mul,
+    Fp2.map_mulByOnePlusI]
+
 theorem map_inverse (f : Hom F G) (a : Fp12 F) : map f a.inverse = (map f a).inverse := by
   simp only [map, inverse, Fp6.map_sub, Fp6.map_mul, Fp6.map_mulByV, Fp6.map_inverse,
     Fp6.map_neg]
@@ -194,15 +199,15 @@ theorem map_frobeniusCoeff (f : Hom F G) :
 theorem map_frobenius (f : Hom F G) (a : Fp12 F) : map f a.frobenius = (map f a).frobenius := by
   simp only [map, frobenius, Fp6.map, Fp2.map_mul, Fp2.map_conjugate, map_frobeniusCoeff]
 
-theorem map_powNat (f : Hom F G) (a : Fp12 F) (e : Nat) :
-    map f (powNat a e) = powNat (map f a) e := by
+theorem map_cyclotomicPow (f : Hom F G) (a : Fp12 F) (e : Nat) :
+    map f (cyclotomicPow a e) = cyclotomicPow (map f a) e := by
   induction e using Nat.strongRecOn generalizing a with
   | _ e ih =>
-    rw [powNat.eq_1 a e, powNat.eq_1 (map f a) e]
+    rw [cyclotomicPow.eq_1 a e, cyclotomicPow.eq_1 (map f a) e]
     split
     · exact map_one f
-    · have h := ih (e / 2) (by omega) (a * a)
-      rw [map_mul] at h
+    · have h := ih (e / 2) (by omega) a.cyclotomicSquare
+      rw [map_cyclotomicSquare] at h
       split <;> simp only [map_mul, h]
 
 end Fp12

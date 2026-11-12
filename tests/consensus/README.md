@@ -4,15 +4,16 @@ A preset or a configuration of the beacon chain is a list of named values.
 EthLib writes each list in Lean, and a typo in one value would change every rule that reads it.
 So the Python suite compares the Lean values with the files that consensus-specs publishes.
 
-The directory `parameters/` holds those files: the mainnet and minimal presets from Phase 0 to Fulu, and the mainnet and minimal configurations.
+The directory `parameters/` holds those files: the mainnet and minimal presets from Phase 0 to Heze, and the mainnet and minimal configurations.
 They come from `ethereum/consensus-specs` at commit `aa16bb4c156184e9548a997d53efaf2a228a6304`, the release `v1.7.0-beta.4`.
 Each file keeps its upstream bytes and its upstream path below `parameters/`, and `parameters/SHA256SUMS` records its digest.
 
 `bindings/python/tests/consensus/test_parameters.py` reads them and runs three comparisons:
 
 - Each preset in Lean holds every value of the preset files, under the same name.
-- Each configuration in Lean holds every value of its file up to Fulu.
+- Each configuration in Lean holds every value of its file, except two kinds.
   The gossip message ID defines the two message domains of the file as constants, so the configuration leaves them out.
+  It also leaves out the values of the feature forks of EIP-8198 and EIP-8321, which no fork schedules.
 - At each fork from Phase 0 on, the parameters in Lean hold each value that a fork replaces.
   Each one is the value of the latest fork that names it.
 
@@ -224,3 +225,14 @@ Their SHA-256 digests are:
 - `general.tar.gz`: `c4f395f71f606c28093500e32067990e430cc73a2277be6f3bf5090adcce3f67`, 3,228 bytes.
 - `mainnet.tar.gz`: `67762986572372a08d3b182535aa760433c86e174e14e0bbd756f350dd19398c`, 967,886,924 bytes.
 - `minimal.tar.gz`: `26d09aea70c62ed235a120a95082d544ab1c2e6fe36bd35ea1bd5da62f3b7b68`, 468,730,308 bytes.
+
+The directory `builder_api/` holds the examples of the Builder API, from `ethereum/builder-specs` at commit `fce64468a81a87892d7cb9b4858272bb3d010e50`.
+They are SSZ examples and their JSON forms in `examples/<fork>/`, copied byte for byte under their fork.
+From Bellatrix to Fulu, they are the files `signed_*`: every fork has a signed bid and a signed blinded block.
+Bellatrix also has a signed validator registration.
+For Gloas they are every file of `examples/gloas/`: a signed request authentication, builder preferences and a preferences request.
+
+`bindings/python/tests/consensus/test_builder_api.py` decodes each example and encodes it again.
+It checks signed roots against the roots of their message and signature, and Gloas roots with independent SSZ calculations.
+It also compares a few fields with the JSON form.
+The signatures of the examples are placeholders, so the tests of the signature checks sign their own messages.

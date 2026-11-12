@@ -127,21 +127,46 @@ def checkInclusionDeadline (state : BeaconState preset fork) (slot : Slot) :
 
 /-- From Electra: the total size of some committees of a slot, each with an attester.
 
+The committees are cut from the given active validators and shuffle.
+
+Each index must be below the given bound.
+
+Each committee is cut with the given count of committees per slot. -/
+def attestationCommitteesSizeOf (preset : Preset) (slot : Slot) (bits : Array Bool)
+    (count perSlot : UInt64) (active : Array ValidatorIndex) (shuffled : Array UInt64) :
+    List CommitteeIndex → Nat → Except TransitionError Nat
+  | [], offset => pure offset
+  | index :: rest, offset => do
+    ensure (index < count) (.committeeIndexOutOfRange index count)
+    let committee ← liftAccessor (beaconCommitteeOf preset slot index perSlot active shuffled)
+    let attesters ← liftAccessor (committeeAttesters bits offset committee)
+    ensure (attesters ≠ []) (.noCommitteeAttester index)
+    attestationCommitteesSizeOf preset slot bits count perSlot active shuffled rest
+      (offset + committee.size)
+
+/-- From Electra: the total size of some committees of a slot, each with an attester.
+
 Each committee must be one of the slot, and must have a bit set for at least one member.
 
 The bits of each committee follow those of the committees before it.
 
-The bits must reach past each committee, else the attestation is invalid. -/
+The bits must reach past each committee, else the attestation is invalid.
+
+The committees share one shuffle of the active validators, computed once for the list.
+
+A list that names no committee computes no shuffle. -/
 def attestationCommitteesSize (state : BeaconState preset fork) (data : AttestationData)
     (bits : Array Bool) : List CommitteeIndex → Nat → Except TransitionError Nat
   | [], offset => pure offset
   | index :: rest, offset => do
-    let count := getCommitteeCountPerSlot state data.target.epoch
+    let count ← liftAccessor (getCommitteeCountPerSlotChecked state data.target.epoch)
+    -- A first index out of range fails here, before the shuffle is computed.
     ensure (index < count) (.committeeIndexOutOfRange index count)
-    let committee ← liftAccessor (getBeaconCommittee state data.slot index)
-    let attesters ← liftAccessor (committeeAttesters bits offset committee)
-    ensure (attesters ≠ []) (.noCommitteeAttester index)
-    attestationCommitteesSize state data bits rest (offset + committee.size)
+    let epoch := computeEpochAtSlot preset data.slot
+    let (active, shuffled) ← liftAccessor (attesterShuffle state epoch)
+    -- The walk checks the first index again, and that check never fails.
+    attestationCommitteesSizeOf preset data.slot bits count (getCommitteeCountPerSlot state epoch)
+      active shuffled (index :: rest) offset
 
 /-- The check that an attestation has one bit for each member of its committees.
 
@@ -166,7 +191,7 @@ def checkAttestationCommittees (state : BeaconState preset fork)
       (getCommitteeIndices (attestation.committeeBits electra)) 0
     ensure (bits.size = size) (.aggregationBitsLength bits.size size)
   else
-    let count := getCommitteeCountPerSlot state data.target.epoch
+    let count ← liftAccessor (getCommitteeCountPerSlotChecked state data.target.epoch)
     ensure (data.index < count) (.committeeIndexOutOfRange data.index count)
     let committee ← liftAccessor (getBeaconCommittee state data.slot data.index)
     ensure (bits.size = committee.size) (.aggregationBitsLength bits.size committee.size)
@@ -312,7 +337,7 @@ def processAttestation (config : Config) (checks : SignatureChecks)
     ensure (earliest ≤ state.slot) (.attestationTooEarly data.slot state.slot)
     let latest ← liftAccessor (liftArith (addChecked data.slot preset.SLOTS_PER_EPOCH))
     ensure (state.slot ≤ latest) (.attestationTooLate data.slot state.slot)
-    let count := getCommitteeCountPerSlot state data.target.epoch
+    let count ← liftAccessor (getCommitteeCountPerSlotChecked state data.target.epoch)
     ensure (data.index < count) (.committeeIndexOutOfRange data.index count)
     let committee ← liftAccessor (getBeaconCommittee state data.slot data.index)
     let bits := attestation.aggregationBits.bits
@@ -357,12 +382,12 @@ def getValidatorFromDeposit (preset : Preset) (fork : Base.Fork) (pubkey : BLSPu
 
 It gets its balance, no participation flag in either epoch, and an inactivity score of zero.
 
-A list at its limit is an error. -/
+A list at its limit is an error, and so is a registry of `2^64` validators or more. -/
 def addValidatorToRegistryAltair (state : BeaconState preset fork) (altair : .altair ≤ fork)
     (pubkey : BLSPubkey) (withdrawalCredentials : Bytes32) (amount : Gwei) :
     Except TransitionError (BeaconState preset fork) :=
   liftAccessor do
-    let index := getIndexForNewValidator state
+    let index ← getIndexForNewValidator state
     let validator := getValidatorFromDeposit preset fork pubkey withdrawalCredentials amount
     let validators ← setOrAppendRooted state.validators index validator
     let balances ← setOrAppendList state.balances index amount
@@ -405,6 +430,8 @@ A deposit to a new key with an invalid signature changes nothing.
 
 A key that a validator has adds the amount to the balance of the first such validator.
 
+A known key at a position of `2^64` or more has no validator index, an overflow.
+
 Before Electra a deposit is credited at once; from Electra it waits in the pending deposits.
 
 From Heze a deposit to a new key with BLS withdrawal credentials changes nothing.
@@ -425,7 +452,8 @@ def applyPendingDeposit (config : Config) (checks : SignatureChecks)
           deposit.amount deposit.signature then
         addValidatorToRegistry state deposit.pubkey deposit.withdrawalCredentials deposit.amount
       else return state
-  | some index => liftAccessor (increaseBalance state index.toUInt64 deposit.amount)
+  | some position => liftAccessor do
+    increaseBalance state (← liftArith (ofNatChecked position)) deposit.amount
 
 /-- From Electra: the state after the deposit of an amount to a key, as [EIP-7251] specifies.
 

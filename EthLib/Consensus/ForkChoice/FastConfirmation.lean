@@ -12,11 +12,19 @@ The rule and its proof are in [arXiv 2405.00549](https://arxiv.org/abs/2405.0054
 
 It assumes that the attestations of honest validators reach every node by the end of their slot.
 
-It also assumes that at most a quarter of the stake is Byzantine, a value of the configuration.
+It also assumes a static set of validators.
+
+In every range of consecutive committees, at most a share of the stake is Byzantine.
+
+That share is a value of the configuration, a quarter by default.
 
 A block is safe for LMD-GHOST when its votes exceed a threshold.
 
 The threshold counts the largest weight that could still vote, the boost, and the adversary.
+
+It weighs the committees of a range of slots exactly, from the effective balances of their members.
+
+An average weight per slot would not bound a given committee, as [a counterexample][avg] shows.
 
 A block of the previous epoch also needs its justification to stay within reach.
 
@@ -33,6 +41,8 @@ From Gloas a pending node counts the votes for the block whether its payload is 
 From Bellatrix the payload of the confirmed block is the safe block of the execution layer.
 
 From Gloas the safe block is the parent payload that the bid of the confirmed block builds on.
+
+[avg]: https://github.com/ethereum/EthLib/issues/1458#issuecomment-6764027413
 -/
 
 @[expose] public section
@@ -42,9 +52,6 @@ namespace EthLib.Consensus
 open Base Uint64
 
 variable {preset : Preset} {fork : Fork}
-
-/-- The per mille added to the weight of a few slots across an epoch boundary, for safety. -/
-def COMMITTEE_WEIGHT_ESTIMATION_ADJUSTMENT_FACTOR : UInt64 := 5
 
 /-- What the fast confirmation rule tracks besides the store of the fork choice. -/
 structure FastConfirmationStore where
@@ -73,41 +80,6 @@ def isFullValidatorSetCovered (preset : Preset) (startSlot endSlot : Slot) :
   let lastOfFirst ← (subChecked afterFirst 1).mapError .arith
   let afterEnd ← (addChecked endSlot 1).mapError .arith
   return computeEpochAtSlot preset lastOfFirst < computeEpochAtSlot preset afterEnd
-
-/-- An estimate of committee weight, rounded up to a thousandth and raised by the adjustment. -/
-def adjustCommitteeWeightEstimateToEnsureSafety (estimate : Gwei) :
-    Except ForkChoiceError Gwei := do
-  let ceil := (← (addChecked estimate 999).mapError .arith) / 1000
-  (mulChecked ceil (1000 + COMMITTEE_WEIGHT_ESTIMATION_ADJUSTMENT_FACTOR)).mapError .arith
-
-/-- An estimate of the weight of the committees of the slots from a start to an end.
-
-A range with a whole epoch weighs the whole active balance.
-
-A range within one epoch weighs one committee per slot.
-
-A range across one epoch boundary counts its slots of the first epoch pro rata, then adjusts. -/
-def estimateCommitteeWeightBetweenSlots (preset : Preset) (totalActiveBalance : Gwei)
-    (startSlot endSlot : Slot) : Except ForkChoiceError Gwei := do
-  if startSlot > endSlot then return 0
-  if ← isFullValidatorSetCovered preset startSlot endSlot then return totalActiveBalance
-  let startEpoch := computeEpochAtSlot preset startSlot
-  let endEpoch := computeEpochAtSlot preset endSlot
-  let slotsPerEpoch := preset.SLOTS_PER_EPOCH
-  let arith {α : Type} (x : Except ArithError α) : Except ForkChoiceError α := x.mapError .arith
-  let committeeWeight ← arith (divChecked totalActiveBalance slotsPerEpoch)
-  if startEpoch = endEpoch then
-    return ← arith (do mulChecked committeeWeight (← addChecked (← subChecked endSlot startSlot) 1))
-  let numSlotsInEndEpoch ← arith (do addChecked (← computeSlotsSinceEpochStart preset endSlot) 1)
-  let remainingSlotsInEndEpoch ← arith (subChecked slotsPerEpoch numSlotsInEndEpoch)
-  let numSlotsInStartEpoch ←
-    arith (do subChecked slotsPerEpoch (← computeSlotsSinceEpochStart preset startSlot))
-  let startEpochWeight ← arith (mulChecked committeeWeight numSlotsInStartEpoch)
-  let endEpochWeight ← arith (mulChecked committeeWeight numSlotsInEndEpoch)
-  let startEpochWeightProRated ←
-    arith (do mulChecked (← divChecked startEpochWeight slotsPerEpoch) remainingSlotsInEndEpoch)
-  adjustCommitteeWeightEstimateToEnsureSafety
-    (← arith (addChecked startEpochWeightProRated endEpochWeight))
 
 /-- The sum of a weight over a list, which must stay within 64 bits. -/
 def sumGwei {α : Type} (items : List α) (weight : α → Except ForkChoiceError Gwei) :
@@ -180,6 +152,34 @@ def getCommitteesBetweenSlots (head : Root) (startSlot endSlot : Slot) :
     let committee ← store.getSlotCommittee head (startSlot + offset.toUInt64)
     return committee.foldl (·.insert ·) participants
 
+/-- The weight of the committees of the slots from a start to an end, both included.
+
+The members of those committees come with it when it reads them.
+
+A range that starts after it ends weighs nothing.
+
+A range with a whole epoch weighs the total active balance of the source of balances.
+
+Otherwise a member of the committees counts once, when it is active in the source of balances.
+
+Its weight is its effective balance there, and the sum is at least one increment. -/
+def computeCommitteeWeightAndMembers (head : Root) (balanceSource : BeaconState preset fork)
+    (startSlot endSlot : Slot) :
+    Except ForkChoiceError (Gwei × Option (Std.TreeSet ValidatorIndex)) := do
+  if startSlot > endSlot then return (0, none)
+  if ← isFullValidatorSetCovered preset startSlot endSlot then
+    return (← (getTotalActiveBalance balanceSource).mapError .accessor, none)
+  let participants ← store.getCommitteesBetweenSlots head startSlot endSlot
+  let epoch := getCurrentEpoch balanceSource
+  let active ← participants.toList.filterM fun index =>
+    return isActiveValidator (← validatorAt balanceSource index) epoch
+  return (← (getTotalBalance balanceSource active).mapError .accessor, some participants)
+
+/-- The weight of the committees of the slots from a start to an end, both included. -/
+def computeCommitteeWeightBetweenSlots (head : Root) (balanceSource : BeaconState preset fork)
+    (startSlot endSlot : Slot) : Except ForkChoiceError Gwei := do
+  return (← store.computeCommitteeWeightAndMembers head balanceSource startSlot endSlot).1
+
 /-- The state of the head, with its slots processed to the current epoch if it is older.
 
 The pending deposits of an epoch from Electra check the signatures of new keys with BLS. -/
@@ -191,13 +191,15 @@ def getPulledUpHeadState (head : Root) : Except ForkChoiceError (BeaconState pre
     (processSlots config .bls headState start).mapError .transition
   else return headState
 
-/-- The votes for a node from the members of the committees of a range of slots.
+/-- The votes for any of a list of nodes from the members of the committees of a range of slots.
+
+The list is read as a set, since only membership in it is tested.
 
 A voter counts when it is active and not slashed in the source of balances, and not an equivocator.
 
 A vote from outside the range by a member of it may count too, which keeps the rule safe. -/
 def getNodeSupportBetweenSlots (head : Root) (balanceSource : BeaconState preset fork)
-    (node : ForkChoiceNode) (startSlot endSlot : Slot) : Except ForkChoiceError Gwei := do
+    (nodes : List ForkChoiceNode) (startSlot endSlot : Slot) : Except ForkChoiceError Gwei := do
   let participants ← store.getCommitteesBetweenSlots head startSlot endSlot
   let epoch := getCurrentEpoch balanceSource
   let counted ← participants.toList.filterM fun index => do
@@ -207,33 +209,44 @@ def getNodeSupportBetweenSlots (head : Root) (balanceSource : BeaconState preset
     match store.latestMessages[index]? with
     | none => return 0
     | some message =>
-      if (← store.getSupportedNode message) = node ∧ index ∉ store.equivocatingIndices then
+      if (← store.getSupportedNode message) ∈ nodes ∧ index ∉ store.equivocatingIndices then
         return (← validatorAt balanceSource index).effectiveBalance
       else return 0
 
-/-- The weight of the equivocators among the members of the committees of a range of slots.
+/-- The weight of the equivocators among a set of validators.
 
 An equivocator counts when it is active in the source of balances. -/
-def getEquivocationScore (head : Root) (balanceSource : BeaconState preset fork)
-    (startSlot endSlot : Slot) : Except ForkChoiceError Gwei := do
-  let participants ← store.getCommitteesBetweenSlots head startSlot endSlot
+def getEquivocationScoreOf (balanceSource : BeaconState preset fork)
+    (participants : Std.TreeSet ValidatorIndex) : Except ForkChoiceError Gwei := do
   let epoch := getCurrentEpoch balanceSource
   let equivocators := participants.toList.filter (· ∈ store.equivocatingIndices)
   let active ← equivocators.filterM fun index => do
     return isActiveValidator (← validatorAt balanceSource index) epoch
   sumGwei active fun index => return (← validatorAt balanceSource index).effectiveBalance
 
+/-- The weight of the equivocators among the members of the committees of a range of slots. -/
+def getEquivocationScore (head : Root) (balanceSource : BeaconState preset fork)
+    (startSlot endSlot : Slot) : Except ForkChoiceError Gwei := do
+  store.getEquivocationScoreOf balanceSource
+    (← store.getCommitteesBetweenSlots head startSlot endSlot)
+
 /-- The largest weight that the adversary can hold in the committees of a range of slots.
 
-It is the Byzantine share of the estimated weight, less the weight of known equivocators. -/
+It is the Byzantine share of the weight of the committees, less the weight of known equivocators.
+
+The share rounds the weight down to 100 Gwei.
+
+The members of the committees are read once: by the weight when it needs them, else here. -/
 def computeAdversarialWeight (head : Root) (balanceSource : BeaconState preset fork)
     (startSlot endSlot : Slot) : Except ForkChoiceError Gwei := do
-  let totalActiveBalance ← (getTotalActiveBalance balanceSource).mapError .accessor
-  let maximumWeight ←
-    estimateCommitteeWeightBetweenSlots preset totalActiveBalance startSlot endSlot
+  let (maximumWeight, members) ←
+    store.computeCommitteeWeightAndMembers head balanceSource startSlot endSlot
   let maxAdversarialWeight ←
     (mulChecked (maximumWeight / 100) config.CONFIRMATION_BYZANTINE_THRESHOLD).mapError .arith
-  let equivocationScore ← store.getEquivocationScore head balanceSource startSlot endSlot
+  let participants ← match members with
+    | some participants => pure participants
+    | none => store.getCommitteesBetweenSlots head startSlot endSlot
+  let equivocationScore ← store.getEquivocationScoreOf balanceSource participants
   return saturatingSub maxAdversarialWeight equivocationScore
 
 /-- The largest weight that the adversary can give a block, from its slot to the last slot.
@@ -252,26 +265,43 @@ def getAdversarialWeight (head : Root) (balanceSource : BeaconState preset fork)
 
 /-- The votes for the parent of a block from the committees of the empty slots between them.
 
-The adversarial weight of those slots is taken off, since the adversary may move its votes. -/
+The adversarial weight of those slots is taken off, since the adversary may move its votes.
+
+A vote from the parent's own slot supports the pending node of the parent, so those votes count.
+
+Before Gloas the pending node is the only node of the parent.
+
+From Gloas the votes for the node of the parent that the block builds on count with them.
+
+That node is the full or the empty one, and it is the ancestor of the block at the parent's slot.
+
+The other of those two nodes is not an ancestor of the block, so the votes for it stay out. -/
 def computeEmptySlotSupportDiscount (head : Root) (balanceSource : BeaconState preset fork)
     (root : Root) : Except ForkChoiceError Gwei := do
   let block ← store.block root
   let parentBlock ← store.block block.parentRoot
   let firstEmpty ← (addChecked parentBlock.slot 1).mapError .arith
   if firstEmpty = block.slot then return 0
-  let parentNode ← store.getAncestor ⟨root, .pending⟩ parentBlock.slot
+  let parentPendingNode : ForkChoiceNode := ⟨block.parentRoot, .pending⟩
+  let parentNodes ←
+    (if .glamsterdam ≤ fork then do
+      let parentNode ← store.getAncestor ⟨root, .pending⟩ parentBlock.slot
+      pure [parentPendingNode, parentNode]
+    else pure [parentPendingNode])
   let lastEmpty ← (subChecked block.slot 1).mapError .arith
   let parentSupport ←
-    store.getNodeSupportBetweenSlots head balanceSource parentNode firstEmpty lastEmpty
+    store.getNodeSupportBetweenSlots head balanceSource parentNodes firstEmpty lastEmpty
   let adversarialWeight ←
     store.computeAdversarialWeight config head balanceSource firstEmpty lastEmpty
   return saturatingSub parentSupport adversarialWeight
 
 /-- The votes that a block needs to be safe for LMD-GHOST.
 
-It starts from the largest weight that could vote since its parent, plus the boost.
+It starts from the weight of the committees since its parent, plus the boost.
 
 It takes off the votes for the parent from the empty slots before the block, less the adversary.
+
+That discount exceeding the weight of the committees since the parent is an error.
 
 It halves the result.
 
@@ -281,29 +311,33 @@ def computeSafetyThreshold (head : Root) (root : Root) (balanceSource : BeaconSt
   let currentSlot ← store.getCurrentSlot config
   let block ← store.block root
   let parentBlock ← store.block block.parentRoot
-  let totalActiveBalance ← (getTotalActiveBalance balanceSource).mapError .accessor
   let proposerScore ← computeProposerScore config balanceSource
-  let maximumSupport ← estimateCommitteeWeightBetweenSlots preset totalActiveBalance
+  let maximumSupport ← store.computeCommitteeWeightBetweenSlots head balanceSource
     (← (addChecked parentBlock.slot 1).mapError .arith)
     (← (subChecked currentSlot 1).mapError .arith)
   let supportDiscount ← store.computeEmptySlotSupportDiscount config head balanceSource root
   let adversarialWeight ← store.getAdversarialWeight config head balanceSource root
+  if supportDiscount > maximumSupport then throw (.supportDiscountAboveMaximum root)
   let withBoost ← (addChecked maximumSupport proposerScore).mapError .arith
   let doubled ← (mulChecked 2 adversarialWeight).mapError .arith
   let bound ← (addChecked withBoost doubled).mapError .arith
-  return if supportDiscount < bound then (bound - supportDiscount) / 2 else 0
+  return (bound - supportDiscount) / 2
 
 /-- Whether a block is safe for LMD-GHOST: its votes exceed its safety threshold.
 
+The votes come from the given tally, which must be the one of the balance source.
+
 Every known block counts as valid here, since the store drops the blocks found invalid. -/
-def isOneConfirmed (head : Root) (balanceSource : BeaconState preset fork) (root : Root) :
-    Except ForkChoiceError Bool := do
-  let support ← store.getAttestationScore ⟨root, .pending⟩ balanceSource
+def isOneConfirmed (head : Root) (balanceSource : BeaconState preset fork) (tally : VoteTally)
+    (root : Root) : Except ForkChoiceError Bool := do
+  let support ← store.scoreFromTally tally ⟨root, .pending⟩
   return support > (← store.computeSafetyThreshold config head root balanceSource)
 
 /-- Whether every block of the confirmed chain is still safe, from the observed justified block.
 
-The chain starts after that block, or at the previous epoch when that block is older. -/
+The chain starts after that block, or at the previous epoch when that block is older.
+
+The votes of the balance source are tallied once, for the whole chain. -/
 def isConfirmedChainSafe (fcr : FastConfirmationStore) (head confirmedRoot : Root) :
     Except ForkChoiceError Bool := do
   let observed := fcr.currentEpochObservedJustifiedCheckpoint
@@ -319,9 +353,10 @@ def isConfirmedChainSafe (fcr : FastConfirmationStore) (head confirmedRoot : Roo
         pure (← store.block ancestor).parentRoot
       else pure ancestor
   let chainRoots ← store.getAncestorRoots confirmedRoot startRootExclusive
+  let source := store.checkpointState fcr.previousEpochObservedJustifiedCheckpoint
+  let tally := source.map store.tallyVotes
   chainRoots.allM fun root => do
-    let balanceSource ← store.checkpointState fcr.previousEpochObservedJustifiedCheckpoint
-    store.isOneConfirmed config head balanceSource root
+    store.isOneConfirmed config head (← source) (← tally) root
 
 /-- An estimate of the votes for the target of the current epoch, from the latest messages.
 
@@ -353,7 +388,7 @@ def computeHonestFfgSupportForCurrentTarget (head : Root) : Except ForkChoiceErr
   let epochStart ← (computeStartSlotAtEpoch preset currentEpoch).mapError .arith
   let lastSlot ← (subChecked currentSlot 1).mapError .arith
   let ffgWeightTillNow ←
-    estimateCommitteeWeightBetweenSlots preset totalActiveBalance epochStart lastSlot
+    store.computeCommitteeWeightBetweenSlots head balanceSource epochStart lastSlot
   let remainingFfgWeight ← (subChecked totalActiveBalance ffgWeightTillNow).mapError .arith
   let honestShare ← (subChecked 100 config.CONFIRMATION_BYZANTINE_THRESHOLD).mapError .arith
   let remainingHonestFfgWeight ←
@@ -407,7 +442,9 @@ Blocks of the previous epoch are confirmed while each is safe and the old head h
 
 That needs the justification of the previous epoch to stay within reach.
 
-Later blocks are confirmed while each is safe, and a new epoch needs its target justified. -/
+Later blocks are confirmed while each is safe, and a new epoch needs its target justified.
+
+The votes of the observed justified state are tallied once, for both walks. -/
 def findLatestConfirmedDescendant (fcr : FastConfirmationStore) (head latestConfirmedRoot : Root) :
     Except ForkChoiceError Root := do
   let currentEpoch ← store.getCurrentStoreEpoch config
@@ -416,6 +453,8 @@ def findLatestConfirmedDescendant (fcr : FastConfirmationStore) (head latestConf
   let arith {α : Type} (x : Except ArithError α) : Except ForkChoiceError α := x.mapError .arith
   let recent (epoch : Epoch) (gap : UInt64) : Except ForkChoiceError Bool := do
     return currentEpoch ≤ (← arith (addChecked epoch gap))
+  let source := store.checkpointState fcr.currentEpochObservedJustifiedCheckpoint
+  let tally := source.map store.tallyVotes
   let mut confirmedRoot := latestConfirmedRoot
   -- The blocks of the previous epoch.
   let previousEpochOk ← do
@@ -431,8 +470,7 @@ def findLatestConfirmedDescendant (fcr : FastConfirmationStore) (head latestConf
     for root in ← store.getAncestorRoots head confirmedRoot do
       if (← store.getBlockEpoch root) = currentEpoch then break
       if !(← store.isAncestor ⟨fcr.previousSlotHead, .pending⟩ ⟨root, .pending⟩) then break
-      let balanceSource ← store.checkpointState fcr.currentEpochObservedJustifiedCheckpoint
-      if !(← store.isOneConfirmed config head balanceSource root) then break
+      if !(← store.isOneConfirmed config head (← source) (← tally) root) then break
       confirmedRoot := root
   -- The blocks of the current epoch.
   let currentEpochOk ←
@@ -442,8 +480,7 @@ def findLatestConfirmedDescendant (fcr : FastConfirmationStore) (head latestConf
     for root in ← store.getAncestorRoots head confirmedRoot do
       if (← store.getBlockEpoch root) > (← store.getBlockEpoch tentativeRoot) then
         if !(← store.willCurrentTargetBeJustified config head) then break
-      let balanceSource ← store.checkpointState fcr.currentEpochObservedJustifiedCheckpoint
-      if !(← store.isOneConfirmed config head balanceSource root) then break
+      if !(← store.isOneConfirmed config head (← source) (← tally) root) then break
       tentativeRoot := root
     let accept ← do
       if (← store.getBlockEpoch tentativeRoot) = currentEpoch then pure true
@@ -539,6 +576,22 @@ def onFastConfirmation (fcr : FastConfirmationStore) :
   let fcr ← store.updateFastConfirmationVariables config fcr head
   return { fcr with confirmedRoot := ← store.getLatestConfirmed config fcr head }
 
+/-- From Bellatrix: the hash of the execution block that a block of the store stands for.
+
+Before Gloas it is the block hash of the payload of the block.
+
+From Gloas a block carries a bid instead of a payload.
+
+The hash is then the parent payload that the bid builds on.
+
+It fails when the store does not hold the block. -/
+def executionBlockHashAt (root : Root) (bellatrix : .bellatrix ≤ fork) :
+    Except ForkChoiceError Hash32 := do
+  let block ← store.block root
+  if gloas : .glamsterdam ≤ fork then
+    return (block.body.signedExecutionPayloadBid gloas).message.parentBlockHash
+  else return (block.body.executionPayload ⟨bellatrix, Nat.lt_of_not_le gloas⟩).blockHash
+
 /-- The hash of the execution block that the execution layer takes as safe.
 
 The rule starts at Bellatrix, with the payload of the confirmed block.
@@ -547,11 +600,19 @@ From Gloas a block carries a bid instead of a payload.
 
 Only the parent payload that the bid builds on is safe then. -/
 def getSafeExecutionBlockHash (fcr : FastConfirmationStore) (bellatrix : .bellatrix ≤ fork) :
-    Except ForkChoiceError Hash32 := do
-  let safeBlock ← store.block fcr.confirmedRoot
-  if gloas : .glamsterdam ≤ fork then
-    return (safeBlock.body.signedExecutionPayloadBid gloas).message.parentBlockHash
-  else return (safeBlock.body.executionPayload ⟨bellatrix, Nat.lt_of_not_le gloas⟩).blockHash
+    Except ForkChoiceError Hash32 :=
+  store.executionBlockHashAt fcr.confirmedRoot bellatrix
+
+/-- The hash of the execution block that the execution layer takes as finalized.
+
+The rule starts at Bellatrix, with the payload of the finalized block.
+
+Before the merge that payload is the default one, whose block hash is zero.
+
+From Gloas only the parent payload that the bid of the finalized block builds on is finalized. -/
+def getFinalizedExecutionBlockHash (bellatrix : .bellatrix ≤ fork) :
+    Except ForkChoiceError Hash32 :=
+  store.executionBlockHashAt store.finalizedCheckpoint.root bellatrix
 
 end Store
 

@@ -1,5 +1,6 @@
 module
 
+public import EthLib.Base.Proofs.MapM
 public import EthLib.Execution.Blocks.DaoFork
 public import EthLib.Execution.Proofs.State.Tracker
 
@@ -120,6 +121,19 @@ theorem applyDaoFork_spec {fork : Fork} {tx tx' : TransactionState}
         tx'.getAccount other = tx.getAccount other :=
   foldlM_moveEther DAO_RECOVERY DAO_ACCOUNTS tx tx' daoAccounts_nodup daoRecovery_not_mem h
 
+/-- The DAO Fork keeps every nonce and every code hash. -/
+theorem applyDaoFork_nonce_codeHash {fork : Fork} {tx tx' : TransactionState}
+    (h : applyDaoFork fork tx = .ok tx') (address : Address) :
+    (tx'.getAccount address).nonce = (tx.getAccount address).nonce ∧
+      (tx'.getAccount address).codeHash = (tx.getAccount address).codeHash :=
+  foldlM_ok_invariant (fun mid : TransactionState =>
+      (mid.getAccount address).nonce = (tx.getAccount address).nonce ∧
+        (mid.getAccount address).codeHash = (tx.getAccount address).codeHash)
+    (fun _ _ _ keeps hstep => by
+      obtain ⟨hn, hc⟩ := moveEther_nonce_codeHash hstep address
+      exact ⟨hn.trans keeps.1, hc.trans keeps.2⟩)
+    ⟨rfl, rfl⟩ h
+
 /-- Moving each listed balance to an outside recipient succeeds when a sum stays below 2^256.
 
 The listed accounts are distinct.
@@ -162,13 +176,20 @@ theorem applyDaoFork_isOk_iff {fork : Fork} {tx : TransactionState} :
 /-- Mainnet activates the DAO Fork at block 1,920,000. -/
 theorem daoForkBlock_mainnet : daoForkBlock ChainConfig.mainnet = some 1920000 := rfl
 
-/-- On mainnet, a header in blocks 1,920,000 to 1,920,009 passes exactly with the fork's extra data.
+/-- Before Paris on mainnet, blocks 1,920,000 to 1,920,009 pass exactly with the DAO extra data.
 
 Every other header passes. -/
-theorem daoExtraDataValid_mainnet {fork : Fork} (header : Header fork) :
+theorem daoExtraDataValid_mainnet {fork : Fork} (hFork : fork < .paris) (header : Header fork) :
     daoExtraDataValid ChainConfig.mainnet header = true ↔
       (1920000 ≤ header.number ∧ header.number < 1920010 → header.extraData = DAO_EXTRA_DATA) := by
-  simp only [daoExtraDataValid, daoForkBlock_mainnet, DAO_EXTRA_DATA_BLOCKS, Nat.reduceAdd]
+  simp only [daoExtraDataValid, hFork, ↓reduceIte, daoForkBlock_mainnet, DAO_EXTRA_DATA_BLOCKS,
+    Nat.reduceAdd]
   by_cases h : 1920000 ≤ header.number ∧ header.number < 1920010 <;> simp [h]
+
+/-- From Paris every header passes the extra data rule of the DAO Fork, on every chain. -/
+theorem daoExtraDataValid_of_paris_le {config : ChainConfig} {fork : Fork} (hFork : .paris ≤ fork)
+    (header : Header fork) : daoExtraDataValid config header = true := by
+  have hNot : ¬fork < .paris := Nat.not_lt.mpr hFork
+  simp only [daoExtraDataValid, hNot, ↓reduceIte]
 
 end EthLib.Execution.Blocks

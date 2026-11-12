@@ -38,12 +38,16 @@ def root(preset: str) -> Path:
     return harness.unpack(name, [case for case in CASES if case.preset == preset], 5)
 
 
-DISAGREEMENTS = harness.disagreements(SUITE)
+DISAGREEMENTS = archives.disagreements(SUITE)
 
 pytestmark = pytest.mark.archive(catalogue.CONSENSUS["mainnet"])
 
 
-@pytest.mark.parametrize("case", harness.in_shard(CASES), ids=lambda case: case.id)
+@pytest.mark.parametrize(
+    "case",
+    harness.in_shard(CASES),
+    ids=lambda case: harness.case_id(case.suite, case.id, case.group),
+)
 def test_case(case, request, record_property) -> None:
     harness.run(root(case.preset), case, DISAGREEMENTS, request, record_property)
 

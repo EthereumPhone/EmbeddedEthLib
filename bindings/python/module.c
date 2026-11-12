@@ -70,6 +70,7 @@ PyObject* SPHINCS_ERROR;
 PyObject* SECP256K1_ERROR;
 PyObject* SECP256R1_ERROR;
 PyObject* ENR_ERROR;
+PyObject* NOISE_ERROR;
 PyObject* PRECOMPILE_ERROR;
 PyObject* STATE_ERROR;
 PyObject* KECCAK_ERROR;
@@ -79,15 +80,24 @@ PyObject* CONSENSUS_ERROR;
 PyObject* HKDF_ERROR;
 PyObject* PBKDF2_ERROR;
 PyObject* SCRYPT_ERROR;
+PyObject* X25519_ERROR;
+PyObject* CHACHAPOLY_ERROR;
+PyObject* KEYSTORE_ERROR;
 PyObject* AES_ERROR;
 PyObject* CONCAT_KDF_ERROR;
 PyObject* BLOCK_ERROR;
 PyObject* ENGINE_ERROR;
+PyObject* JWT_ERROR;
 PyObject* CHAIN_ERROR;
 PyObject* RLP_ERROR;
 PyObject* SSZ_ERROR;
 PyObject* SNAPPY_ERROR;
 PyObject* VARINT_ERROR;
+PyObject* UVARINT_ERROR;
+PyObject* MULTISTREAM_ERROR;
+PyObject* MPLEX_ERROR;
+PyObject* YAMUX_ERROR;
+PyObject* LIBP2P_IDENTITY_ERROR;
 PyObject* GOSSIP_ERROR;
 PyObject* DISCV5_ERROR;
 PyObject* RLPX_ERROR;
@@ -96,6 +106,8 @@ PyObject* DISCV4_ERROR;
 PyObject* FORK_ID_ERROR;
 PyObject* ETH_WIRE_ERROR;
 PyObject* SNAP_ERROR;
+PyObject* ERA1_ERROR;
+PyObject* ERA_ERROR;
 PyObject* TRANSACTION_ERROR;
 PyObject* VRF_ERROR;
 PyObject* TRIE_ERROR;
@@ -105,6 +117,7 @@ PyObject* TRANSITION_ERROR;
 PyObject* LIGHT_CLIENT_ERROR;
 PyObject* FORK_CHOICE_ERROR;
 PyObject* WEAK_SUBJECTIVITY_ERROR;
+PyObject* DEPOSIT_TREE_ERROR;
 PyObject* VALIDATOR_DUTY_ERROR;
 PyObject* PROPOSER_ERROR;
 PyObject* SLASHING_PROTECTION_ERROR;
@@ -115,6 +128,11 @@ PyObject* BINDING_ERROR;
 extern uint64_t eth_pbkdf2_const_hash_len(lean_object* unit);
 extern uint64_t eth_scrypt_const_salsa_block_size(lean_object* unit);
 extern uint64_t eth_scrypt_const_block_size(lean_object* unit);
+extern uint64_t eth_x25519_const_key_size(lean_object* unit);
+extern uint64_t eth_chachapoly_const_key_size(lean_object* unit);
+extern uint64_t eth_chachapoly_const_nonce_size(lean_object* unit);
+extern uint64_t eth_chachapoly_const_tag_size(lean_object* unit);
+extern uint64_t eth_chacha20_const_block_size(lean_object* unit);
 
 extern uint64_t
 eth_bls_const_bytes_per_pubkey(
@@ -677,10 +695,12 @@ static PyMethodDef methods[] = {
   {"trie_root", py_trie_root, METH_VARARGS, DOC_trie_root},
   {"trie_verify_proof", py_trie_verify_proof, METH_VARARGS, DOC_trie_verify_proof},
   {"trie_hex_prefix", py_trie_hex_prefix, METH_VARARGS, DOC_trie_hex_prefix},
+  {"trie_verify_range", py_trie_verify_range, METH_VARARGS, DOC_trie_verify_range},
   {"trie_verify_account_proof", py_trie_verify_account_proof, METH_VARARGS, DOC_trie_verify_account_proof},
   {"vrf_verify", py_vrf_verify, METH_VARARGS, DOC_vrf_verify},
   {"vrf_secret", py_vrf_secret, METH_VARARGS, DOC_vrf_secret},
   {"vrf_evaluate", py_vrf_evaluate, METH_VARARGS, DOC_vrf_evaluate},
+  {"vrf_mix", py_vrf_mix, METH_VARARGS, DOC_vrf_mix},
   {"crc32", py_crc32, METH_VARARGS, DOC_crc32},
   {"crc32_number", py_crc32_number, METH_VARARGS, DOC_crc32_number},
   {"crc32c", py_crc32c, METH_VARARGS, DOC_crc32c},
@@ -698,6 +718,19 @@ static PyMethodDef methods[] = {
   {"scrypt_block_mix", py_scrypt_block_mix, METH_VARARGS, DOC_scrypt_block_mix},
   {"scrypt_romix", py_scrypt_romix, METH_VARARGS, DOC_scrypt_romix},
   {"scrypt", py_scrypt, METH_VARARGS, DOC_scrypt},
+  {"x25519", py_x25519, METH_VARARGS, DOC_x25519},
+  {"x25519_public_key", py_x25519_public_key, METH_VARARGS, DOC_x25519_public_key},
+  {"chacha20_quarter_round", py_chacha20_quarter_round, METH_VARARGS, DOC_chacha20_quarter_round},
+  {"chacha20_quarter_round_state", py_chacha20_quarter_round_state, METH_VARARGS, DOC_chacha20_quarter_round_state},
+  {"chacha20_block", py_chacha20_block, METH_VARARGS, DOC_chacha20_block},
+  {"chacha20_crypt", py_chacha20_crypt, METH_VARARGS, DOC_chacha20_crypt},
+  {"poly1305", py_poly1305, METH_VARARGS, DOC_poly1305},
+  {"poly1305_key", py_poly1305_key, METH_VARARGS, DOC_poly1305_key},
+  {"chacha20_poly1305_encrypt", py_chacha20_poly1305_encrypt, METH_VARARGS, DOC_chacha20_poly1305_encrypt},
+  {"chacha20_poly1305_decrypt", py_chacha20_poly1305_decrypt, METH_VARARGS, DOC_chacha20_poly1305_decrypt},
+  {"keystore_nfkd", py_keystore_nfkd, METH_VARARGS, DOC_keystore_nfkd},
+  {"keystore_password", py_keystore_password, METH_VARARGS, DOC_keystore_password},
+  {"keystore_decrypt", py_keystore_decrypt, METH_VARARGS, DOC_keystore_decrypt},
   {"secp256k1_verify", py_secp256k1_verify, METH_VARARGS, DOC_secp256k1_verify},
   {"secp256k1_is_low_s", py_secp256k1_is_low_s, METH_VARARGS, DOC_secp256k1_is_low_s},
   {"secp256k1_recover", py_secp256k1_recover, METH_VARARGS, DOC_secp256k1_recover},
@@ -706,6 +739,18 @@ static PyMethodDef methods[] = {
   {"secp256k1_address", py_secp256k1_address, METH_VARARGS, DOC_secp256k1_address},
   {"secp256r1_verify", py_secp256r1_verify, METH_VARARGS, DOC_secp256r1_verify},
   {"enr_from_text", py_enr_from_text, METH_VARARGS, DOC_enr_from_text},
+  {"noise_initialize", py_noise_initialize, METH_VARARGS, DOC_noise_initialize},
+  {"noise_write_message", py_noise_write_message, METH_VARARGS, DOC_noise_write_message},
+  {"noise_read_message", py_noise_read_message, METH_VARARGS, DOC_noise_read_message},
+  {"noise_transport", py_noise_transport, METH_VARARGS, DOC_noise_transport},
+  {"noise_cipher_encrypt", py_noise_cipher_encrypt, METH_VARARGS, DOC_noise_cipher_encrypt},
+  {"noise_cipher_decrypt", py_noise_cipher_decrypt, METH_VARARGS, DOC_noise_cipher_decrypt},
+  {"noise_frame", py_noise_frame, METH_VARARGS, DOC_noise_frame},
+  {"noise_unframe", py_noise_unframe, METH_VARARGS, DOC_noise_unframe},
+  {"noise_libp2p_initialize", py_noise_libp2p_initialize, METH_VARARGS, DOC_noise_libp2p_initialize},
+  {"noise_libp2p_write", py_noise_libp2p_write, METH_VARARGS, DOC_noise_libp2p_write},
+  {"noise_libp2p_read", py_noise_libp2p_read, METH_VARARGS, DOC_noise_libp2p_read},
+  {"noise_libp2p_complete", py_noise_libp2p_complete, METH_VARARGS, DOC_noise_libp2p_complete},
   {"enr_seq", py_enr_seq, METH_VARARGS, DOC_enr_seq},
   {"enr_verify_v4", py_enr_verify_v4, METH_VARARGS, DOC_enr_verify_v4},
   {"enr_node_id", py_enr_node_id, METH_VARARGS, DOC_enr_node_id},
@@ -736,8 +781,19 @@ static PyMethodDef methods[] = {
   {"consensus_get_custody_groups", py_consensus_get_custody_groups, METH_VARARGS, DOC_consensus_get_custody_groups},
   {"consensus_compute_columns_for_custody_group", py_consensus_compute_columns_for_custody_group,
    METH_VARARGS, DOC_consensus_compute_columns_for_custody_group},
+  {"consensus_get_custody_column_bits", py_consensus_get_custody_column_bits, METH_VARARGS,
+   DOC_consensus_get_custody_column_bits},
   {"consensus_ssz_static", py_consensus_ssz_static, METH_VARARGS, DOC_consensus_ssz_static},
+  {"consensus_is_valid_builder_signature", py_consensus_is_valid_builder_signature,
+   METH_VARARGS, DOC_consensus_is_valid_builder_signature},
+  {"consensus_verify_builder_request_auth_signature",
+   py_consensus_verify_builder_request_auth_signature,
+   METH_VARARGS, DOC_consensus_verify_builder_request_auth_signature},
+  {"consensus_builder_bid_value", py_consensus_builder_bid_value,
+   METH_VARARGS, DOC_consensus_builder_bid_value},
   {"consensus_merkle_proof", py_consensus_merkle_proof, METH_VARARGS, DOC_consensus_merkle_proof},
+  {"consensus_upgrade_operation", py_consensus_upgrade_operation, METH_VARARGS,
+   DOC_consensus_upgrade_operation},
   {"consensus_verify_blob_sidecar_inclusion_proof", py_consensus_verify_blob_sidecar_inclusion_proof,
    METH_VARARGS, DOC_consensus_verify_blob_sidecar_inclusion_proof},
   {"consensus_process_operation", py_consensus_process_operation, METH_VARARGS,
@@ -752,6 +808,12 @@ static PyMethodDef methods[] = {
    METH_VARARGS, DOC_consensus_create_light_client_bootstrap},
   {"consensus_create_light_client_update", py_consensus_create_light_client_update,
    METH_VARARGS, DOC_consensus_create_light_client_update},
+  {"consensus_light_client_update_as", py_consensus_light_client_update_as, METH_VARARGS,
+   DOC_consensus_light_client_update_as},
+  {"consensus_light_client_gossip_full_node", py_consensus_light_client_gossip_full_node,
+   METH_VARARGS, DOC_consensus_light_client_gossip_full_node},
+  {"consensus_light_client_gossip_light_client", py_consensus_light_client_gossip_light_client,
+   METH_VARARGS, DOC_consensus_light_client_gossip_light_client},
   {"consensus_block_to_light_client_header", py_consensus_block_to_light_client_header,
    METH_VARARGS, DOC_consensus_block_to_light_client_header},
   {"consensus_light_client_update_proofs", py_consensus_light_client_update_proofs,
@@ -783,6 +845,24 @@ static PyMethodDef methods[] = {
    DOC_consensus_initialize_genesis},
   {"consensus_is_valid_genesis_state", py_consensus_is_valid_genesis_state, METH_VARARGS,
    DOC_consensus_is_valid_genesis_state},
+  {"consensus_deposit_tree_new", py_consensus_deposit_tree_new, METH_VARARGS,
+   DOC_consensus_deposit_tree_new},
+  {"consensus_deposit_tree_push_leaf", py_consensus_deposit_tree_push_leaf, METH_VARARGS,
+   DOC_consensus_deposit_tree_push_leaf},
+  {"consensus_deposit_tree_push_leaves", py_consensus_deposit_tree_push_leaves, METH_VARARGS,
+   DOC_consensus_deposit_tree_push_leaves},
+  {"consensus_deposit_tree_get_root", py_consensus_deposit_tree_get_root, METH_VARARGS,
+   DOC_consensus_deposit_tree_get_root},
+  {"consensus_deposit_tree_finalize", py_consensus_deposit_tree_finalize, METH_VARARGS,
+   DOC_consensus_deposit_tree_finalize},
+  {"consensus_deposit_tree_get_proof", py_consensus_deposit_tree_get_proof, METH_VARARGS,
+   DOC_consensus_deposit_tree_get_proof},
+  {"consensus_deposit_tree_get_snapshot", py_consensus_deposit_tree_get_snapshot, METH_VARARGS,
+   DOC_consensus_deposit_tree_get_snapshot},
+  {"consensus_deposit_tree_from_snapshot", py_consensus_deposit_tree_from_snapshot, METH_VARARGS,
+   DOC_consensus_deposit_tree_from_snapshot},
+  {"consensus_deposit_tree_snapshot_calculate_root", py_consensus_deposit_tree_snapshot_calculate_root, METH_VARARGS,
+   DOC_consensus_deposit_tree_snapshot_calculate_root},
   {"consensus_compute_weak_subjectivity_period", py_consensus_compute_weak_subjectivity_period,
    METH_VARARGS, DOC_consensus_compute_weak_subjectivity_period},
   {"consensus_is_within_weak_subjectivity_period",
@@ -845,6 +925,10 @@ static PyMethodDef methods[] = {
    DOC_consensus_on_valid_payload},
   {"consensus_on_invalidated_payload", py_consensus_on_invalidated_payload, METH_VARARGS,
    DOC_consensus_on_invalidated_payload},
+  {"consensus_is_optimistic_node", py_consensus_is_optimistic_node, METH_VARARGS,
+   DOC_consensus_is_optimistic_node},
+  {"consensus_inclusion_list_satisfaction", py_consensus_inclusion_list_satisfaction,
+   METH_VARARGS, DOC_consensus_inclusion_list_satisfaction},
   {"consensus_is_optimistic_restricted_domain", py_consensus_is_optimistic_restricted_domain,
    METH_VARARGS, DOC_consensus_is_optimistic_restricted_domain},
   {"consensus_get_eth1_vote", py_consensus_get_eth1_vote, METH_VARARGS,
@@ -915,6 +999,8 @@ static PyMethodDef methods[] = {
    DOC_consensus_reqresp_request_bounds},
   {"consensus_reqresp_response_bounds", py_consensus_reqresp_response_bounds, METH_VARARGS,
    DOC_consensus_reqresp_response_bounds},
+  {"consensus_reqresp_response_valid", py_consensus_reqresp_response_valid, METH_VARARGS,
+   DOC_consensus_reqresp_response_valid},
   {"consensus_gossip_topic_bound", py_consensus_gossip_topic_bound, METH_VARARGS,
    DOC_consensus_gossip_topic_bound},
   {"consensus_compute_subnet_for_attestation", py_consensus_compute_subnet_for_attestation,
@@ -987,6 +1073,10 @@ static PyMethodDef methods[] = {
   {"snap_codes_answer", py_snap_codes_answer, METH_VARARGS, DOC_snap_codes_answer},
   {"snap_access_lists_answer", py_snap_access_lists_answer, METH_VARARGS, DOC_snap_access_lists_answer},
   {"snap_full_account", py_snap_full_account, METH_VARARGS, DOC_snap_full_account},
+  {"snap_verify_account_range", py_snap_verify_account_range, METH_VARARGS, DOC_snap_verify_account_range},
+  {"snap_verify_storage_ranges", py_snap_verify_storage_ranges, METH_VARARGS, DOC_snap_verify_storage_ranges},
+  {"era1_decode", py_era1_decode, METH_VARARGS, DOC_era1_decode},
+  {"era_decode", py_era_decode, METH_VARARGS, DOC_era_decode},
   {"snappy_decompress", py_snappy_decompress, METH_VARARGS, DOC_snappy_decompress},
   {"snappy_compress", py_snappy_compress, METH_VARARGS, DOC_snappy_compress},
   {"snappy_decode_frames", py_snappy_decode_frames, METH_VARARGS, DOC_snappy_decode_frames},
@@ -995,8 +1085,21 @@ static PyMethodDef methods[] = {
   {"snappy_masked_crc", py_snappy_masked_crc, METH_VARARGS, DOC_snappy_masked_crc},
   {"varint_encode", py_varint_encode, METH_VARARGS, DOC_varint_encode},
   {"varint_decode", py_varint_decode, METH_VARARGS, DOC_varint_decode},
+  {"uvarint_encode", py_uvarint_encode, METH_VARARGS, DOC_uvarint_encode},
+  {"uvarint_decode", py_uvarint_decode, METH_VARARGS, DOC_uvarint_decode},
+  {"multistream_encode", py_multistream_encode, METH_VARARGS, DOC_multistream_encode},
+  {"multistream_decode", py_multistream_decode, METH_VARARGS, DOC_multistream_decode},
+  {"mplex_encode", py_mplex_encode, METH_VARARGS, DOC_mplex_encode},
+  {"mplex_decode", py_mplex_decode, METH_VARARGS, DOC_mplex_decode},
+  {"yamux_encode", py_yamux_encode, METH_VARARGS, DOC_yamux_encode},
+  {"yamux_decode", py_yamux_decode, METH_VARARGS, DOC_yamux_decode},
+  {"libp2p_public_key", py_libp2p_public_key, METH_VARARGS, DOC_libp2p_public_key},
+  {"libp2p_peer_id", py_libp2p_peer_id, METH_VARARGS, DOC_libp2p_peer_id},
+  {"libp2p_decode_peer_id", py_libp2p_decode_peer_id, METH_VARARGS, DOC_libp2p_decode_peer_id},
   {"gossip_message_id", py_gossip_message_id, METH_VARARGS, DOC_gossip_message_id},
   {"gossip_decode_payload", py_gossip_decode_payload, METH_VARARGS, DOC_gossip_decode_payload},
+  {"gossip_rpc_decode", py_gossip_rpc_decode, METH_VARARGS, DOC_gossip_rpc_decode},
+  {"gossip_rpc_encode", py_gossip_rpc_encode, METH_VARARGS, DOC_gossip_rpc_encode},
   {"receipt_reencode", py_receipt_reencode, METH_VARARGS, DOC_receipt_reencode},
   {"receipt_logs_bloom", py_receipt_logs_bloom, METH_VARARGS, DOC_receipt_logs_bloom},
   {"block_make_receipts", py_block_make_receipts, METH_VARARGS, DOC_block_make_receipts},
@@ -1031,14 +1134,24 @@ static PyMethodDef methods[] = {
   {"hoodi_active_fork", py_hoodi_active_fork, METH_VARARGS, DOC_hoodi_active_fork},
   {"active_fork", py_active_fork, METH_VARARGS, DOC_active_fork},
   {"engine_new_payload", py_engine_new_payload, METH_VARARGS, DOC_engine_new_payload},
+  {"engine_jwt_build", py_engine_jwt_build, METH_VARARGS, DOC_engine_jwt_build},
+  {"engine_jwt_check", py_engine_jwt_check, METH_VARARGS, DOC_engine_jwt_check},
   {"engine_new_payload_on_chain", py_engine_new_payload_on_chain, METH_VARARGS,
    DOC_engine_new_payload_on_chain},
+  {"engine_build_payload", py_engine_build_payload, METH_VARARGS,
+   DOC_engine_build_payload},
   {"engine_forkchoice_updated", py_engine_forkchoice_updated, METH_VARARGS,
    DOC_engine_forkchoice_updated},
+  {"engine_get_blobs", py_engine_get_blobs, METH_VARARGS, DOC_engine_get_blobs},
+  {"engine_get_payload", py_engine_get_payload, METH_VARARGS, DOC_engine_get_payload},
+  {"engine_get_payload_bodies", py_engine_get_payload_bodies, METH_VARARGS,
+   DOC_engine_get_payload_bodies},
   {"engine_prepare_execution_payload", py_engine_prepare_execution_payload, METH_VARARGS,
    DOC_engine_prepare_execution_payload},
   {"engine_prepare_execution_payload_gloas", py_engine_prepare_execution_payload_gloas,
    METH_VARARGS, DOC_engine_prepare_execution_payload_gloas},
+  {"engine_finalized_execution_block_hash", py_engine_finalized_execution_block_hash,
+   METH_VARARGS, DOC_engine_finalized_execution_block_hash},
   {"pyvalue_echo", py_pyvalue_echo, METH_VARARGS, DOC_pyvalue_echo},
   {NULL, NULL, 0, NULL},
 };
@@ -1070,6 +1183,7 @@ PyInit__native(void) {
     SECP256K1_ERROR = PyObject_GetAttrString(errors, "Secp256k1Error");
     SECP256R1_ERROR = PyObject_GetAttrString(errors, "Secp256r1Error");
     ENR_ERROR = PyObject_GetAttrString(errors, "EnrError");
+    NOISE_ERROR = PyObject_GetAttrString(errors, "NoiseError");
     PRECOMPILE_ERROR = PyObject_GetAttrString(errors, "PrecompileError");
     STATE_ERROR = PyObject_GetAttrString(errors, "StateError");
     KECCAK_ERROR = PyObject_GetAttrString(errors, "KeccakError");
@@ -1079,6 +1193,9 @@ PyInit__native(void) {
     HKDF_ERROR = PyObject_GetAttrString(errors, "HkdfError");
     PBKDF2_ERROR = PyObject_GetAttrString(errors, "Pbkdf2Error");
     SCRYPT_ERROR = PyObject_GetAttrString(errors, "ScryptError");
+    X25519_ERROR = PyObject_GetAttrString(errors, "X25519Error");
+    CHACHAPOLY_ERROR = PyObject_GetAttrString(errors, "ChaCha20Poly1305Error");
+    KEYSTORE_ERROR = PyObject_GetAttrString(errors, "KeystoreError");
     AES_ERROR = PyObject_GetAttrString(errors, "AesError");
     CONCAT_KDF_ERROR = PyObject_GetAttrString(errors, "ConcatKdfError");
     BLOCK_ERROR = PyObject_GetAttrString(errors, "BlockError");
@@ -1086,6 +1203,11 @@ PyInit__native(void) {
     SSZ_ERROR = PyObject_GetAttrString(errors, "SszError");
     SNAPPY_ERROR = PyObject_GetAttrString(errors, "SnappyError");
     VARINT_ERROR = PyObject_GetAttrString(errors, "VarintError");
+    UVARINT_ERROR = PyObject_GetAttrString(errors, "UvarintError");
+    MULTISTREAM_ERROR = PyObject_GetAttrString(errors, "MultistreamError");
+    MPLEX_ERROR = PyObject_GetAttrString(errors, "MplexError");
+    YAMUX_ERROR = PyObject_GetAttrString(errors, "YamuxError");
+    LIBP2P_IDENTITY_ERROR = PyObject_GetAttrString(errors, "Libp2pIdentityError");
     GOSSIP_ERROR = PyObject_GetAttrString(errors, "GossipError");
     DISCV5_ERROR = PyObject_GetAttrString(errors, "Discv5Error");
     RLPX_ERROR = PyObject_GetAttrString(errors, "RlpxError");
@@ -1094,17 +1216,21 @@ PyInit__native(void) {
     FORK_ID_ERROR = PyObject_GetAttrString(errors, "ForkIdError");
     ETH_WIRE_ERROR = PyObject_GetAttrString(errors, "EthWireError");
     SNAP_ERROR = PyObject_GetAttrString(errors, "SnapError");
+    ERA1_ERROR = PyObject_GetAttrString(errors, "Era1Error");
+    ERA_ERROR = PyObject_GetAttrString(errors, "EraError");
     TRANSACTION_ERROR = PyObject_GetAttrString(errors, "TransactionError");
     VRF_ERROR = PyObject_GetAttrString(errors, "VrfError");
     TRIE_ERROR = PyObject_GetAttrString(errors, "TrieError");
     EVM_ERROR = PyObject_GetAttrString(errors, "EvmError");
     FEES_ERROR = PyObject_GetAttrString(errors, "FeesError");
     ENGINE_ERROR = PyObject_GetAttrString(errors, "EngineError");
+    JWT_ERROR = PyObject_GetAttrString(errors, "JwtError");
     TRANSITION_ERROR = PyObject_GetAttrString(errors, "TransitionError");
     LIGHT_CLIENT_ERROR = PyObject_GetAttrString(errors, "LightClientError");
     FORK_CHOICE_ERROR = PyObject_GetAttrString(errors, "ForkChoiceError");
     CHAIN_ERROR = PyObject_GetAttrString(errors, "ChainError");
     WEAK_SUBJECTIVITY_ERROR = PyObject_GetAttrString(errors, "WeakSubjectivityError");
+    DEPOSIT_TREE_ERROR = PyObject_GetAttrString(errors, "DepositTreeError");
     VALIDATOR_DUTY_ERROR = PyObject_GetAttrString(errors, "ValidatorDutyError");
     PROPOSER_ERROR = PyObject_GetAttrString(errors, "ProposerError");
     SLASHING_PROTECTION_ERROR = PyObject_GetAttrString(errors, "SlashingProtectionError");
@@ -1266,5 +1392,10 @@ PyInit__native(void) {
   PyModule_AddIntConstant(m, "PBKDF2_HASH_LEN", PBKDF2_HASH_LEN);
   PyModule_AddIntConstant(m, "SALSA_BLOCK_SIZE", SALSA_BLOCK_SIZE);
   PyModule_AddIntConstant(m, "SCRYPT_BLOCK_SIZE", SCRYPT_BLOCK_SIZE);
+  PyModule_AddIntConstant(m, "X25519_KEY_SIZE", (long) eth_x25519_const_key_size(lean_box(0)));
+  PyModule_AddIntConstant(m, "CHACHAPOLY_KEY_SIZE", (long) eth_chachapoly_const_key_size(lean_box(0)));
+  PyModule_AddIntConstant(m, "CHACHAPOLY_NONCE_SIZE", (long) eth_chachapoly_const_nonce_size(lean_box(0)));
+  PyModule_AddIntConstant(m, "CHACHAPOLY_TAG_SIZE", (long) eth_chachapoly_const_tag_size(lean_box(0)));
+  PyModule_AddIntConstant(m, "CHACHA20_BLOCK_SIZE", (long) eth_chacha20_const_block_size(lean_box(0)));
   return m;
 }

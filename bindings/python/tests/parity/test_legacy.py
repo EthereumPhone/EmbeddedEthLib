@@ -23,7 +23,7 @@ ROOT = (
     else None
 )
 CASES = catalogue.legacy_cases(ROOT) if ROOT else []
-DISAGREEMENTS = harness.disagreements(SUITE)
+DISAGREEMENTS = archives.disagreements(SUITE)
 
 # The cases that the run on each change reads, at their path in the archive.
 VENDORED = archives.REPO / "tests" / "execution" / "legacytests"
@@ -32,7 +32,9 @@ pytestmark = pytest.mark.archive(catalogue.LEGACY)
 
 
 @pytest.mark.parametrize(
-    "case", harness.in_shard(CASES), ids=lambda case: f"{case.group}:{case.id}"
+    "case",
+    harness.in_shard(CASES),
+    ids=lambda case: harness.case_id(case.suite, case.id, case.group),
 )
 def test_case(case, request, record_property) -> None:
     harness.run(cast(Path, ROOT), case, DISAGREEMENTS, request, record_property)

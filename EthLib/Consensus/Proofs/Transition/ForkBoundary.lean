@@ -67,6 +67,18 @@ theorem processUpgrades_fork_le {forked after : ForkedBeaconState preset}
     cases computed
     exact Nat.le_refl _
 
+/-- Upgrades that end no later than the fork they start from leave the state as it is. -/
+theorem processUpgrades_eq_of_fork_le {forked after : ForkedBeaconState preset}
+    (computed : processUpgrades config checks forked = .ok after)
+    (stays : after.fork ≤ forked.fork) : after = forked := by
+  rw [processUpgrades] at computed
+  split at computed
+  · obtain ⟨next, -, rest⟩ := bind_ok_iff.mp computed
+    exact absurd (Nat.lt_of_lt_of_le next.property
+      (Nat.le_trans (processUpgrades_fork_le rest) stays)) (Nat.lt_irrefl _)
+  · cases computed
+    rfl
+
 /-- Before the first slot of the next fork epoch, no upgrade is due. -/
 theorem upgradeDue_of_before {forked : ForkedBeaconState preset}
     (before : ∀ next ∈ config.nextFork forked.fork,
@@ -166,35 +178,64 @@ theorem stateTransitionAcross_of_before {fork : Fork} {engine : ExecutionEngine 
 
 /-! ## The invariant across fork boundaries -/
 
+/-- Each upgrade is an upgrade frame. -/
+theorem upgradeFrame_upgradeNext {pre : ForkedBeaconState preset}
+    {post : {post : ForkedBeaconState preset // pre.fork < post.fork}}
+    (computed : upgradeNext config checks pre = .ok post) :
+    UpgradeFrame config pre.state post.val.state := by
+  obtain ⟨fork, state⟩ := pre
+  cases fork
+  case phase0 =>
+    simp only [upgradeNext, bind_ok_iff, pure, Except.pure, Except.ok.injEq] at computed
+    obtain ⟨_, upgraded, rfl⟩ := computed
+    exact upgradeFrame_upgradeToAltair upgraded
+  case altair | bellatrix | shapella =>
+    simp only [upgradeNext, pure, Except.pure, Except.ok.injEq] at computed
+    subst computed
+    refine upgradeFrame_carryFields state ?_ ?_ <;> (dsimp only; decide)
+  case dencun =>
+    simp only [upgradeNext, bind_ok_iff, pure, Except.pure, Except.ok.injEq] at computed
+    obtain ⟨_, upgraded, rfl⟩ := computed
+    exact upgradeFrame_upgradeToElectra upgraded
+  case pectra =>
+    simp only [upgradeNext, bind_ok_iff, pure, Except.pure, Except.ok.injEq] at computed
+    obtain ⟨_, upgraded, rfl⟩ := computed
+    exact upgradeFrame_upgradeToFulu upgraded
+  case fusaka =>
+    simp only [upgradeNext, bind_ok_iff, pure, Except.pure, Except.ok.injEq] at computed
+    obtain ⟨_, upgraded, rfl⟩ := computed
+    exact upgradeFrame_upgradeToGloas upgraded
+  case glamsterdam =>
+    simp only [upgradeNext, bind_ok_iff, pure, Except.pure, Except.ok.injEq] at computed
+    obtain ⟨_, upgraded, rfl⟩ := computed
+    exact upgradeFrame_upgradeToHeze upgraded
+  all_goals
+    simp only [upgradeNext] at computed
+    cases computed
+
 /-- An upgrade keeps the invariant and the finalized checkpoint. -/
 theorem upgradeNext_invariant {pre : ForkedBeaconState preset}
     {post : {post : ForkedBeaconState preset // pre.fork < post.fork}}
     (holds : Invariant pre.state) (computed : upgradeNext config checks pre = .ok post) :
     Invariant post.val.state ∧
       post.val.state.finalizedCheckpoint = pre.state.finalizedCheckpoint := by
-  obtain ⟨fork, state⟩ := pre
-  cases fork <;>
-    simp only [upgradeNext, bind_ok_iff, pure, Except.pure, Except.ok.injEq, throw,
-      throwThe, MonadExceptOf.throw, reduceCtorEq] at computed
-  · obtain ⟨_, upgraded, rfl⟩ := computed
-    exact upgradeToAltair_invariant holds upgraded
-  · subst computed
-    exact carryFields_invariant (by decide : Fork.altair < .bellatrix)
-      (by decide : Fork.bellatrix < .glamsterdam) holds
-  · subst computed
-    exact carryFields_invariant (by decide : Fork.bellatrix < .shapella)
-      (by decide : Fork.shapella < .glamsterdam) holds
-  · subst computed
-    exact carryFields_invariant (by decide : Fork.shapella < .dencun)
-      (by decide : Fork.dencun < .glamsterdam) holds
-  · obtain ⟨_, upgraded, rfl⟩ := computed
-    exact upgradeToElectra_invariant holds upgraded
-  · obtain ⟨_, upgraded, rfl⟩ := computed
-    exact upgradeToFulu_invariant holds upgraded
-  · obtain ⟨_, upgraded, rfl⟩ := computed
-    exact upgradeToGloas_invariant holds upgraded
-  · obtain ⟨_, upgraded, rfl⟩ := computed
-    exact upgradeToHeze_invariant holds upgraded
+  have frame := upgradeFrame_upgradeNext computed
+  exact ⟨frame.invariant holds, frame.finalized⟩
+
+/-- The upgrades due at a slot keep a property of states that each upgrade keeps. -/
+theorem processUpgrades_induction {property : ForkedBeaconState preset → Prop}
+    (step : ∀ {pre : ForkedBeaconState preset}
+      {post : {post : ForkedBeaconState preset // pre.fork < post.fork}},
+      property pre → upgradeNext config checks pre = .ok post → property post.val)
+    {forked after : ForkedBeaconState preset} (holds : property forked)
+    (computed : processUpgrades config checks forked = .ok after) : property after := by
+  fun_induction processUpgrades config checks forked generalizing after with
+  | case1 forked _ more =>
+    obtain ⟨next, nextOk, rest⟩ := bind_ok_iff.mp computed
+    exact more next (step holds nextOk) rest
+  | case2 forked _ =>
+    cases computed
+    exact holds
 
 /-- The upgrades due at a slot keep the invariant and the finalized checkpoint. -/
 theorem processUpgrades_invariant {forked after : ForkedBeaconState preset}

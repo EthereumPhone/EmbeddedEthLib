@@ -127,6 +127,8 @@ namespace Store
 
 variable {config : Config} {store : Store preset fork}
 
+variable {tally : Except ForkChoiceError VoteTally}
+
 /-- The lookup of the state of a checkpoint succeeds exactly when the store holds it. -/
 theorem checkpointState_ok_iff {checkpoint : Checkpoint} {state : BeaconState preset fork} :
     store.checkpointState checkpoint = .ok state ↔
@@ -134,6 +136,22 @@ theorem checkpointState_ok_iff {checkpoint : Checkpoint} {state : BeaconState pr
   unfold checkpointState
   cases store.checkpointStates[checkpoint]? <;>
     simp [throw, throwThe, MonadExceptOf.throw, pure, Except.pure]
+
+/-- The node that a vote supports is a node of the block of the vote. -/
+theorem getSupportedNode_root {message : LatestMessage fork} {node : ForkChoiceNode}
+    (supported : store.getSupportedNode message = .ok node) : node.root = message.root := by
+  unfold getSupportedNode at supported
+  by_cases gloas : .glamsterdam ≤ fork
+  · simp only [gloas, ↓reduceDIte, bind, Except.bind] at supported
+    cases known : store.block message.root with
+    | error e => simp [known] at supported
+    | ok block =>
+      rw [known] at supported
+      by_cases lt : block.slot < message.slot gloas <;>
+        simp only [lt, ↓reduceIte, pure, Except.pure, Except.ok.injEq] at supported <;>
+        rw [← supported]
+  · simp only [gloas, ↓reduceDIte, pure, Except.pure, Except.ok.injEq] at supported
+    rw [← supported]
 
 /-- Before Gloas a vote supports the pending node of its block. -/
 theorem getSupportedNode_of_lt {message : LatestMessage fork} (before : fork < .glamsterdam) :
@@ -244,33 +262,37 @@ theorem mem_getNodeChildren_of_gloas {node child : ForkChoiceNode}
     rw [empty] at built
     cases built
 
-/-- Before Gloas and without a boost, the weight of a node is its votes in the justified state. -/
+/-- The tally of the justified state, when the store holds that state. -/
+theorem justifiedTally_of_state {state : BeaconState preset fork}
+    (justifiedState : store.checkpointState store.justifiedCheckpoint = .ok state) :
+    store.justifiedTally = .ok (store.tallyVotes state) := by
+  simp [justifiedTally, justifiedState, bind, Except.bind, pure, Except.pure]
+
+/-- Before Gloas and without a boost, the weight of a node is its votes in the given tally. -/
 theorem getWeight_of_no_boost {node : ForkChoiceNode} (before : fork < .glamsterdam)
     (noBoost : store.proposerBoostRoot = Vector.replicate 32 0) :
-    store.getWeight config node =
-      store.checkpointState store.justifiedCheckpoint >>= store.getAttestationScore node := by
+    store.getWeight config tally node = tally >>= (store.scoreFromTally · node) := by
   have later : ¬ .glamsterdam ≤ fork := Nat.not_le_of_lt before
   simp [getWeight, later, noBoost]
 
 /-- From Gloas the empty and the full node of a block from the previous slot weigh nothing. -/
 theorem getWeight_of_payloadDecision {node : ForkChoiceNode} (gloas : .glamsterdam ≤ fork)
     (decision : store.isPreviousSlotPayloadDecision config node = .ok true) :
-    store.getWeight config node = .ok 0 := by
+    store.getWeight config tally node = .ok 0 := by
   simp [getWeight, gloas, decision, bind, Except.bind, pure, Except.pure]
 
-/-- From Gloas the weight of a node is its votes in the justified state, without the boost.
+/-- From Gloas the weight of a node is its votes in the given tally, without the boost.
 
 The node must not be a payload decision of the previous slot. -/
 theorem getWeight_of_not_boost {node : ForkChoiceNode} (gloas : .glamsterdam ≤ fork)
     (decision : store.isPreviousSlotPayloadDecision config node = .ok false)
     (noBoost : store.shouldApplyProposerBoost config gloas = .ok false) :
-    store.getWeight config node =
-      store.checkpointState store.justifiedCheckpoint >>= store.getAttestationScore node := by
+    store.getWeight config tally node = tally >>= (store.scoreFromTally · node) := by
   simp only [getWeight, gloas, ↓reduceIte, ↓reduceDIte, decision, noBoost, bind, Except.bind]
-  cases store.checkpointState store.justifiedCheckpoint with
+  cases tally with
   | error e => rfl
-  | ok state =>
-    cases score : store.getAttestationScore node state <;> simp [score, pure, Except.pure]
+  | ok votes =>
+    cases score : store.scoreFromTally votes node <;> simp [score, pure, Except.pure]
 
 /-- The slot after a slot below the last one. -/
 private theorem nextSlot_toNat {slot : Slot} (fits : slot.toNat + 1 < 2 ^ 64) :
@@ -321,26 +343,27 @@ theorem shouldApplyProposerBoost_of_not_weak {block parent : BeaconBlock preset 
 
 /-- A weighed node is the node, its weight and its tiebreaker. -/
 theorem weighNode_ok_iff {node : ForkChoiceNode} {weighed : WeightedNode} :
-    store.weighNode config node = .ok weighed ↔ weighed.1 = node ∧
-      store.getWeight config node = .ok weighed.2.1 ∧
+    store.weighNode config tally node = .ok weighed ↔ weighed.1 = node ∧
+      store.getWeight config tally node = .ok weighed.2.1 ∧
       store.tiebreaker config node = .ok weighed.2.2 := by
   obtain ⟨n, w, t⟩ := weighed
   unfold weighNode
-  cases store.getWeight config node <;> cases store.tiebreaker config node <;>
+  cases store.getWeight config tally node <;> cases store.tiebreaker config node <;>
     simp [bind, Except.bind, pure, Except.pure, eq_comm]
 
 /-- The heaviest child is computed from the weighted children among the given nodes. -/
 theorem heaviestChild_eq {nodes : List ForkChoiceNode} {node : ForkChoiceNode}
-    {result : Option ForkChoiceNode} (found : store.heaviestChild config nodes node = .ok result) :
+    {result : Option ForkChoiceNode}
+    (found : store.heaviestChild config tally nodes node = .ok result) :
     ∃ children weighted, store.getNodeChildren node = .ok children ∧
-      (children.filter (· ∈ nodes)).mapM (store.weighNode config) = .ok weighted ∧
+      (children.filter (· ∈ nodes)).mapM (store.weighNode config tally) = .ok weighted ∧
       chooseHeaviest weighted = result := by
   unfold heaviestChild at found
   cases hc : store.getNodeChildren node with
   | error e => simp [hc, bind, Except.bind] at found
   | ok children =>
     simp only [hc, bind, Except.bind] at found
-    cases hw : (children.filter (· ∈ nodes)).mapM (store.weighNode config) with
+    cases hw : (children.filter (· ∈ nodes)).mapM (store.weighNode config tally) with
     | error e => simp [hw] at found
     | ok weighted =>
       simp only [hw, pure, Except.pure, Except.ok.injEq] at found
@@ -348,12 +371,12 @@ theorem heaviestChild_eq {nodes : List ForkChoiceNode} {node : ForkChoiceNode}
 
 /-- The walk stops at a node with no child among the given nodes. -/
 theorem getHeadFrom_leaf {nodes : List ForkChoiceNode} {start head : ForkChoiceNode}
-    (walk : store.getHeadFrom config nodes start = .ok head) :
+    (walk : store.getHeadFrom config tally nodes start = .ok head) :
     ∃ children, store.getNodeChildren head = .ok children ∧ ∀ child ∈ children, child ∉ nodes := by
   induction start using getHeadFrom.induct store with
   | _ start ih =>
     rw [getHeadFrom] at walk
-    cases found : store.heaviestChild config nodes start with
+    cases found : store.heaviestChild config tally nodes start with
     | error e => simp [found, bind, Except.bind] at walk
     | ok result =>
       obtain ⟨children, weighted, hc, hw, choice⟩ := heaviestChild_eq found
@@ -376,11 +399,12 @@ theorem getHeadFrom_leaf {nodes : List ForkChoiceNode} {start head : ForkChoiceN
 
 /-- The walk returns its starting node or one of the given nodes. -/
 theorem getHeadFrom_mem {nodes : List ForkChoiceNode} {start head : ForkChoiceNode}
-    (walk : store.getHeadFrom config nodes start = .ok head) : head = start ∨ head ∈ nodes := by
+    (walk : store.getHeadFrom config tally nodes start = .ok head) :
+    head = start ∨ head ∈ nodes := by
   induction start using getHeadFrom.induct store with
   | _ start ih =>
     rw [getHeadFrom] at walk
-    cases found : store.heaviestChild config nodes start with
+    cases found : store.heaviestChild config tally nodes start with
     | error e => simp [found, bind, Except.bind] at walk
     | ok result =>
       cases result with
@@ -500,14 +524,14 @@ theorem getNodeChildren_empty_ok {node : ForkChoiceNode} {nodes : List ForkChoic
 
 The walk from the end node back to the slot of the start reaches the start. -/
 theorem getAncestor_getHeadFrom (before : fork < .glamsterdam) {nodes : List ForkChoiceNode}
-    {start head : ForkChoiceNode} (walk : store.getHeadFrom config nodes start = .ok head)
+    {start head : ForkChoiceNode} (walk : store.getHeadFrom config tally nodes start = .ok head)
     (pending : start.payloadStatus = .pending) {startBlock : BeaconBlock preset fork}
     (found : store.blocks[start.root]? = some startBlock) :
     store.getAncestor head startBlock.slot = .ok start := by
   induction start using getHeadFrom.induct store generalizing startBlock with
   | _ start ih =>
     rw [getHeadFrom] at walk
-    cases chosen : store.heaviestChild config nodes start with
+    cases chosen : store.heaviestChild config tally nodes start with
     | error e => simp [chosen, bind, Except.bind] at walk
     | ok result =>
       cases result with
@@ -536,9 +560,8 @@ theorem getAncestor_getHeadFrom (before : fork < .glamsterdam) {nodes : List For
             omega
           have upper := ih child lower walk childPending childFound
           rw [getAncestor_trans (UInt64.le_of_lt higher) upper,
-            getAncestor_step childFound (UInt64.not_le.mpr higher) (parent ▸ found) higher,
-            parentPayloadStatus_of_lt before, parent, ← pending,
-            getAncestor_of_le found (UInt64.le_refl _)]
+            getAncestor_parent_of_slot_lt childFound (parent ▸ found) higher,
+            parentPayloadStatus_of_lt before, parent, ← pending]
         · cases walk
 
 /-- A node whose viable subtree can be computed is a known block.
@@ -579,8 +602,7 @@ theorem isAncestor_getHead_of_lt_gloas (before : fork < .glamsterdam) {head : Fo
     obtain ⟨justifiedBlock, justifiedFound⟩ := filterNodeTree_known tree
     simp only [tree, bind, Except.bind, later, false_and, ↓reduceIte] at found
     have walked := getAncestor_getHeadFrom before found rfl justifiedFound
-    simp [isAncestor, block_ok_iff.mpr justifiedFound, walked, later, bind, Except.bind, pure,
-      Except.pure]
+    exact isAncestor_of_getAncestor walked
 
 /-- From Gloas, let the walk from a known node end at some node.
 
@@ -589,7 +611,7 @@ The ancestor of that end at the slot of the start has the block of the start.
 When the start is empty or full, that ancestor is the start itself. -/
 theorem getAncestor_getHeadFrom_of_gloas (gloas : .glamsterdam ≤ fork)
     {nodes : List ForkChoiceNode} {start head : ForkChoiceNode}
-    (walk : store.getHeadFrom config nodes start = .ok head)
+    (walk : store.getHeadFrom config tally nodes start = .ok head)
     {startBlock : BeaconBlock preset fork}
     (found : store.blocks[start.root]? = some startBlock) :
     ∃ ancestor, store.getAncestor head startBlock.slot = .ok ancestor ∧
@@ -598,7 +620,7 @@ theorem getAncestor_getHeadFrom_of_gloas (gloas : .glamsterdam ≤ fork)
   induction start using getHeadFrom.induct store generalizing startBlock with
   | _ start ih =>
     rw [getHeadFrom] at walk
-    cases chosen : store.heaviestChild config nodes start with
+    cases chosen : store.heaviestChild config tally nodes start with
     | error e => simp [chosen, bind, Except.bind] at walk
     | ok result =>
       cases result with
@@ -642,16 +664,15 @@ theorem getAncestor_getHeadFrom_of_gloas (gloas : .glamsterdam ≤ fork)
             obtain ⟨ancestor, upper, rootEq, -⟩ := ih source lower walk childFound
             have step : store.getAncestor head startBlock.slot = .ok start := by
               rw [getAncestor_trans (UInt64.le_of_lt higher) upper,
-                getAncestor_step (rootEq ▸ childFound) (UInt64.not_le.mpr higher)
-                  (parent ▸ found) higher,
-                built, parent, getAncestor_of_le found (UInt64.le_refl _)]
+                getAncestor_parent_of_slot_lt (rootEq ▸ childFound) (parent ▸ found) higher,
+                built, parent]
             exact ⟨start, step, rfl, .inl rfl⟩
         · cases walk
 
 /-- From Gloas, the walk from a known node ends at a descendant of that node. -/
 theorem isAncestor_getHeadFrom_of_gloas (gloas : .glamsterdam ≤ fork)
     {nodes : List ForkChoiceNode} {start head : ForkChoiceNode}
-    (walk : store.getHeadFrom config nodes start = .ok head)
+    (walk : store.getHeadFrom config tally nodes start = .ok head)
     {startBlock : BeaconBlock preset fork}
     (found : store.blocks[start.root]? = some startBlock) :
     store.isAncestor head start = .ok true := by
@@ -759,17 +780,17 @@ theorem heaviestChild_of_previousSlot {gloas : .glamsterdam ≤ fork}
     (verified : store.isPayloadVerified gloas root = true)
     (emptyIn : ⟨root, .empty⟩ ∈ nodes) (fullIn : ⟨root, .full⟩ ∈ nodes)
     (extendOk : store.shouldExtendPayload config gloas root = .ok extend) :
-    store.heaviestChild config nodes ⟨root, .pending⟩ =
+    store.heaviestChild config tally nodes ⟨root, .pending⟩ =
       .ok (some ⟨root, if extend then .full else .empty⟩) := by
   have emptyDecision := isPreviousSlotPayloadDecision_of_previous (status := .empty) found nextOk
     current (by decide)
   have fullDecision := isPreviousSlotPayloadDecision_of_previous (status := .full) found nextOk
     current (by decide)
-  have emptyWeighed : store.weighNode config ⟨root, .empty⟩ = .ok (⟨root, .empty⟩, 0, 1) :=
+  have emptyWeighed : store.weighNode config tally ⟨root, .empty⟩ = .ok (⟨root, .empty⟩, 0, 1) :=
     weighNode_ok_iff.mpr ⟨rfl, getWeight_of_payloadDecision gloas emptyDecision, by
       simp [tiebreaker, gloas, getPayloadStatusTiebreaker, emptyDecision, bind, Except.bind,
         pure, Except.pure]⟩
-  have fullWeighed : store.weighNode config ⟨root, .full⟩ =
+  have fullWeighed : store.weighNode config tally ⟨root, .full⟩ =
       .ok (⟨root, .full⟩, 0, if extend then 2 else 0) :=
     weighNode_ok_iff.mpr ⟨rfl, getWeight_of_payloadDecision gloas fullDecision, by
       cases extend <;> simp [tiebreaker, gloas, getPayloadStatusTiebreaker, fullDecision,

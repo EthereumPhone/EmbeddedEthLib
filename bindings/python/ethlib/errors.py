@@ -97,6 +97,10 @@ class WeakSubjectivityError(EthLibError, ValueError):
     """The weak subjectivity period or the staleness check of a checkpoint has no answer."""
 
 
+class DepositTreeError(EthLibError, ValueError):
+    """A deposit tree or its snapshot rejected an operation."""
+
+
 class ValidatorDutyError(EthLibError, ValueError):
     """A duty of an honest validator has no result for its state or its input."""
 
@@ -127,6 +131,22 @@ class Pbkdf2Error(EthLibError, ValueError):
 
 class ScryptError(EthLibError, ValueError):
     """scrypt or one of its steps rejected its input."""
+
+
+class NoiseError(EthLibError, ValueError):
+    """A Noise handshake, identity, frame or authenticated message was rejected."""
+
+
+class X25519Error(EthLibError, ValueError):
+    """An X25519 scalar or coordinate has the wrong size."""
+
+
+class ChaCha20Poly1305Error(EthLibError, ValueError):
+    """ChaCha20-Poly1305 rejected a size, index, counter, AAD length or authentication tag."""
+
+
+class KeystoreError(EthLibError, ValueError):
+    """An ERC-2335 keystore failed to decode, derive its key or decrypt."""
 
 
 class ConcatKdfError(EthLibError, ValueError):
@@ -161,8 +181,28 @@ class VarintError(EthLibError, ValueError):
     """The bytes are not one minimal varint."""
 
 
+class UvarintError(EthLibError, ValueError):
+    """The bytes do not start with a multiformats unsigned varint, or a value is out of range."""
+
+
+class MultistreamError(EthLibError, ValueError):
+    """The bytes do not start with a multistream-select message."""
+
+
+class MplexError(EthLibError, ValueError):
+    """The bytes do not start with an mplex frame, or a frame is outside the format."""
+
+
+class YamuxError(EthLibError, ValueError):
+    """The bytes do not start with a yamux frame, or a frame is outside the format."""
+
+
+class Libp2pIdentityError(EthLibError, ValueError):
+    """A secp256k1 key, peer ID or secret of a libp2p identity was rejected."""
+
+
 class GossipError(EthLibError, ValueError):
-    """A gossip message was rejected, or its fork has no name."""
+    """A gossip message or RPC was rejected, or its fork has no name; code 0 is a bad argument."""
 
 
 class Discv5Error(EthLibError, ValueError):
@@ -198,7 +238,15 @@ class EthWireError(EthLibError, ValueError):
 
 
 class SnapError(EthLibError, ValueError):
-    """A snap message was rejected, with the code of its error, or 0 for a bad argument."""
+    """A snap message or range answer was rejected, with its error code, or 0 for a bad argument."""
+
+
+class Era1Error(EthLibError, ValueError):
+    """An era1 file was rejected, with the code of its fault, or 0 for a bad argument."""
+
+
+class EraError(EthLibError, ValueError):
+    """An era file was rejected, with the code of its fault, or 0 for a bad argument."""
 
 
 class TransactionError(EthLibError, ValueError):
@@ -219,9 +267,10 @@ class FeesError(EthLibError, ValueError):
 
 class TrieError(EthLibError, ValueError):
     """
-    A trie has no root, a proof does not verify, or an RLP input is malformed.
+    A trie has no root, a proof or a range does not verify, or an RLP input is malformed.
 
-    Trie errors have codes from 1, proof errors codes from 101, and a malformed input code 0.
+    Trie errors have codes from 1, proof errors from 101 and range errors from 201.
+    Account proof errors have codes from 501, and a malformed input code 0.
     """
 
 
@@ -239,6 +288,10 @@ class PrecompileError(EthLibError, ValueError):
 
 class EngineError(EthLibError, ValueError):
     """An Engine API method returned a JSON-RPC error, whose code is the negative of this code."""
+
+
+class JwtError(EthLibError, ValueError):
+    """An Engine API authentication token could not be built or checked."""
 
 
 class ChainError(EthLibError, ValueError):
@@ -268,6 +321,7 @@ __all__ = [
     "ConsensusError",
     "TransitionError",
     "WeakSubjectivityError",
+    "DepositTreeError",
     "ValidatorDutyError",
     "ProposerError",
     "SlashingProtectionError",
@@ -276,6 +330,10 @@ __all__ = [
     "HkdfError",
     "Pbkdf2Error",
     "ScryptError",
+    "X25519Error",
+    "NoiseError",
+    "ChaCha20Poly1305Error",
+    "KeystoreError",
     "ConcatKdfError",
     "AesError",
     "BlockError",
@@ -283,6 +341,11 @@ __all__ = [
     "SnappyError",
     "SszError",
     "VarintError",
+    "UvarintError",
+    "MultistreamError",
+    "MplexError",
+    "YamuxError",
+    "Libp2pIdentityError",
     "GossipError",
     "Discv5Error",
     "RlpxError",
@@ -291,11 +354,14 @@ __all__ = [
     "ForkIdError",
     "EthWireError",
     "SnapError",
+    "Era1Error",
+    "EraError",
     "TransactionError",
     "VrfError",
     "TrieError",
     "EvmError",
     "FeesError",
     "EngineError",
+    "JwtError",
     "ChainError",
 ]

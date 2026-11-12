@@ -73,7 +73,8 @@ The binding of the batch check of KZG openings reduces to the same problem, or t
 The binding of the batch check of KZG cells reduces to the bilinear variant of that problem, or to such a root.
 That reduction holds in a model of the target group of the pairing.
 
-No theorem states binding for the batch check of blobs.
+The binding of the batch check of blobs reduces to a challenge that is a root of a nonzero polynomial, or to recovery of the setup secret.
+That reduction holds for algebraic adversaries, with the challenge hash modelled as a random oracle.
 No theorem covers the code that runs, the C boundary, or timing.
 
 ### XMSS
@@ -270,6 +271,30 @@ Its bound is `2^32 (1 + 2 Q) / 2^256`, because the proof splits a win by the ind
 One hidden-seed step adds `Q / 2^256` to its bound.
 Verification accepts any tree, so a holder that chooses its secrets can bias every output.
 
+The output hashes its index with its secret: `keccak256(PQ_VRF_OUTPUT | LE32(i) | s)`.
+`outputHash_binding` (`Proofs/Vrf/Verify.lean`) says that two equal outputs come from one index and one secret, or their two output inputs, which differ, are a Keccak-256 collision.
+`verify_index_binding` applies it to two openings that verify at two different indices, under any roots.
+So one secret gives different outputs at different indices, unless Keccak-256 collides.
+That two such outputs behave as independent values is a random-oracle heuristic, which no theorem states.
+A holder can still grind index by index, at about `2^k` hashes per index for a threshold of one in `2^k`.
+
+A selection therefore compares `mixOutput`, the hash of the output with randomness revealed after the root is registered.
+`prEvent_selected_le` (`Proofs/Vrf/Selection.lean`) covers a holder that chooses every secret of its tree.
+The mix is a random oracle, and the tree hash is Keccak-256 itself.
+The holder makes at most `q` mix queries before the randomness is drawn, then opens any index of a set `I` fixed in advance.
+The mixed value of its output lands in a target set `S` with probability at most `|I| |S| / 2^256 + q / 2^256`, plus the chance that `findHashCollision` returns a collision with the honest opening at that index.
+No theorem bounds that last chance, as for uniqueness.
+The theorem says nothing about a holder that registers a root without knowing a tree under it.
+That case would need the tree hash as a random oracle too, and an extractor of the tree from the queries.
+It says nothing either about randomness that the holder knows at registration, or can bias: the game draws it uniformly and independently of the holder.
+The game is EthLib's own.
+`selected_iff_mixOutput` shows that, with `mixOutput` in place of the oracle, its event is exactly the protocol's check.
+
+[EIP-8450](https://github.com/ethereum/EIPs/blob/46976b2a9bf99f727fb87dc8c809e3a3cdc6b445/EIPS/eip-8450.md#cryptographic-helpers) specifies the interface `vrf.Verify` and the property of unique outputs, not the construction.
+The index in the output keeps that interface, and changes every output of the construction that EthLib specified before.
+The EIP's rationale ([Two keys per validator](https://github.com/ethereum/EIPs/blob/46976b2a9bf99f727fb87dc8c809e3a3cdc6b445/EIPS/eip-8450.md#two-keys-per-validator)) says that the root fixes one output per index before the validator knows its inputs.
+That does not stop a holder from choosing its outputs, so the fork that uses the root must select with the mix.
+
 ### BLS12-381
 
 The BLS theorems check the constants, because a wrong digit in a modulus or in the generator would very likely make one of them fail.
@@ -369,9 +394,32 @@ The groups are the multiples of the generators of G1 and G2, and the test is the
 The test is sound (`blsScheme_sound`).
 `sign_eq` and `verify_iff_isDh` prove that EthLib's `sign` and `verify` compute the scheme.
 There `H(m)` is the hash to G2 of `m` under the message tag.
-Aggregation and proofs of possession lie outside the game.
+Aggregation and proofs of possession lie outside that game.
 
-`byteForgeAdvantage_le` (`Proofs/Bls/Security/Refinement.lean`) turns a forger on byte encodings into a named group-element forger with at least the same advantage.
+A second game (`Proofs/Bls/Security/PopGame.lean`) states unforgeability of aggregates with proofs of possession, after §3.3 of [draft-irtf-cfrg-bls-signature-04](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-bls-signature-04#section-3.3).
+One key is honest; the adversary chooses the others.
+It wins with an aggregate on a message it never asked to be signed, verifying under the sum of keys that include the honest one and all carry valid proofs.
+The counts below include the calls of signing, of the honest proof and of verification.
+`Pop.forgeAdvantage_le` (`Proofs/Bls/Security/PopBound.lean`) bounds a forger within `q` message and `qK` key hash calls by `q` times a named solver of the same problem, plus `(q + qK - 1) / |F|`.
+It assumes the test is sound, every element of `G1` is a multiple of `g1`, and `qK` is at most the characteristic of the scalars.
+Without the last, enough copies of the honest key sum to zero.
+`Pop.byteForgeAdvantage_le_coCdhAdvantage` (`Proofs/Bls/Security/PopByteGame.lean`) carries the bound to EthLib's bytes.
+The forger sees compressed keys, hashes, signatures and proofs, and returns bytes.
+It must pass EthLib's proof verification for every key and EthLib's fast aggregate verification, each with the oracle's hash in place of the hash to G2 (`Proofs/Bls/Security/PopRefinement.lean`).
+`byteVerify_eq_popVerify` and `byteFastAggregateVerify_hashPoint` show that with the real hashes these checks are `popVerify` and `fastAggregateVerify`, and `popProve_eq` that the honest proof is `popProve`.
+The key hash of bytes that decode to a multiple of `g1` is the group oracle on the decoded element; other bytes get independent uniform answers.
+The key-call count leaves those other bytes out, since verification never hashes them.
+`LightClientForgery.forgeAdvantage_le` (`Consensus/Proofs/LightClient/Unforgeable.lean`) applies the bound to the light client.
+One sync committee member is honest; the forger chooses the configuration, the store, the update and the clock, and gives a proof of possession for each signer.
+It wins if `validateLightClientUpdate` accepts the update with the honest member's bit set, with the oracle's hash of the signing root, and the honest member never signed that root.
+Its advantage is at most the byte bound above.
+`validateLightClientUpdate_oracleChecks` shows that with the real hash of the signing root, the game's check is the light client's check with the BLS checks.
+The light client theorems of `Authenticate.lean` still take `SignatureChecks.AggregateSound`, because they reason about one accepted update, not a probability.
+The game requires a proof of possession that passes PopVerify, §3.3.3, under the key tag.
+Ethereum registers a validator key with a deposit signature instead, a signature on a message that holds the key, under the message tag and the deposit domain.
+The bound does not cover that form of proof.
+
+`Security.byteForgeAdvantage_le` (`Proofs/Bls/Security/Refinement.lean`) turns a forger on byte encodings into a named group-element forger with at least the same advantage.
 The byte forger receives a compressed key and compressed hash and signing answers, and returns arbitrary message and signature bytes.
 The game runs EthLib's G2 decompression, signature subgroup check and key validation before the pairing check.
 This step needs no pairing law, because the byte check and the group test pair the same group elements.
@@ -385,7 +433,7 @@ EthLib's secret keys exclude zero, and a zero key always loses.
 `nonzeroByteForgeAdvantage_eq` (`Proofs/Bls/Security/Refinement.lean`) draws a uniform nonzero key instead.
 Against that key, a forger wins exactly `r / (r - 1)` times its byte advantage.
 `nonzeroByteForgeAdvantage_le_coCdhAdvantage` carries this factor into the co-CDH bound below.
-`byteForgeAdvantage_le_coCdhAdvantage` gives the same `q`-factor co-CDH bound when the decoded forger makes at most `q` hash calls.
+`Security.byteForgeAdvantage_le_coCdhAdvantage` gives the same `q`-factor co-CDH bound when the decoded forger makes at most `q` hash calls.
 `byteForgeAdvantage_le_coCdhAdvantage_of_byteHashCallBound` states the bound with the hash-call bound on the byte forger itself.
 `byteHashCallBound_iff` proves that the two bounds are equivalent, because the encoding forwards each query once.
 
@@ -410,7 +458,71 @@ The parity of `y` must be the recovery id.
 Under them, `(r, s')` verifies under the same key and hash exactly when `s'` is `s` or `n - s`.
 `verify_and_isLowS_iff` adds that `s` is low, and then that signature is the only valid low-s one with that `r`.
 
-No theorem states unforgeability, which rests on the discrete logarithm problem.
+The probability of forging a signature with a signing oracle has a bound in an idealised model, below, which rests on the discrete logarithm problem and on properties of the hash.
+`Proofs/Secp256k1/Security/Game.lean` states the unforgeability game of GenDSA, the abstraction of ECDSA in [Fersch, Kiltz and Poettering](https://doi.org/10.1145/2976749.2978413), Definition 6, in their bijective random oracle model.
+There, `verify_neg` shows that `(r, -s)` verifies whenever `(r, s)` does, when opposite points share their encoding, as `x` coordinates do.
+So the game counts only messages that were never signed.
+`forgeAdvantage_collision_pos` shows that a collision of the message hash wins that game with positive probability.
+`Proofs/Secp256k1/Security/KeyOnly.lean` states the key-only game of the source's Definition 4, with no signing oracle.
+`forgeAdvantage_toAdversary` proves that it is the chosen-message game of a forger that never asks for a signature.
+`keyOnlyAdvantage_le_indep` replaces the bijection by independent uniform answers in that game.
+It counts no win once a new answer repeats a cached value in the direction of its query.
+The cost is at most `q (q + 1) / 2` over the size of the bijection's domain, for a forger with at most `q` queries to the bijection or its inverse.
+That is the step from Game G0 to Game G1 of §4.2 of the source, in the proof of its Theorem 2, whose bound `Q² / 2^L` is at least as large.
+The source draws the key from the nonzero scalars; the key-only game here draws it from all scalars, and the key `0` never verifies.
+So its advantage is the source's times `(n - 1) / n`, where `n` is the number of scalars.
+`keyOnlyIndepAdvantage_eq_outside` (`Proofs/Secp256k1/Security/KeyOnlyOutside.lean`) proves that the advantage with independent answers stays the same when each new forward answer is one query to an outside oracle with no input.
+`forward_point_eq_answer_ne_of_mem_support_contextFork` proves that the two runs returned by a replay fork at the new forward query of the forgery's point share that point and got different answers there.
+`le_prEvent_isSome_contextFork_keyOnlyOutsideRun` bounds the chance of the fork from below on each fixed key, in the form of Lemma 1 of the source.
+`le_prEvent_isSome_contextFork_keyOnlyOutsideRun_uniform` gives the same bound with the key drawn uniformly, as Lemma 1 draws it at random.
+Unlike Figure 2 of the source, the fork draws the coins after the fork point again.
+`reduce_forward_eq_of_forkIndex_eq_some` (`Proofs/Secp256k1/Security/ForwardCase.lean`) proves that the check of a run with a fork index read the logged answer at that index, so `ψ` maps that answer to the forgery's `t`.
+It rests on an invariant of the run: each logged pair stays cached, and while no flag is raised the cache is a partial bijection.
+`forward_eq_of_mem_support_contextFork` (`Proofs/Secp256k1/Security/ForwardCase.lean`) gives, for both runs of the fork, the shared point and the two different answers, with `ψ` mapping each answer to the `t` of its forgery.
+For a forger with at most `q` queries to the bijection or its inverse on every key, `keyOnlyIndepAdvantage_le_forkIndex_add_notMem` (`Proofs/Secp256k1/Security/KeyOnlyOutside.lean`) bounds its chance to win with independent answers, over a uniform key, by the chance of a fork index plus the chance that the check passes on a point that was not a new forward query.
+`prEvent_inverse_le_dlog`, below, bounds the second chance.
+`divisionAdvantage` (`Proofs/Secp256k1/Security/DivisionResistance.lean`) states the ψ-relative division resistance of the hash, Definition 5 of the source.
+`prEvent_contextFork_div_eq_le_divisionAdvantage` bounds the fork whose two forgeries divide to the same scalar, the abort of line 10 of Figure 9, by `q + 1` times the advantage of the reduction of Figure 10.
+The hash is fixed there, while §2.3 of the source draws a key for it, so the bound charges that named reduction and no adversary of division resistance in general.
+`prEvent_contextFork_div_ne_le_dlog` (`Proofs/Secp256k1/Security/ForwardSolver.lean`) bounds the other forks by the advantage of the discrete-logarithm solver of Figure 9, which extracts the key from the two forgeries.
+`redrawInverse_fst_evalDistEq` (`Proofs/Secp256k1/Security/Redraw.lean`) proves the step of lines 25 to 28 of Figure 7 of the source: a uniform answer that encodes a nonzero multiple of the base point, redrawn as the encoding of `a g` for a uniform nonzero `a`, is still uniform.
+It assumes that the base point is nonzero, that `2` is nonzero in the scalars, that the encoding is semi-injective, and that opposite points share their encoding; the encoding is then exactly 2-to-1 on those points.
+So it covers ECDSA, not the injective case of Definition 2 (b) of the source.
+The redraw takes the test of the image as an argument, with a hypothesis that it agrees with a search of the encodings of the nonzero multiples of the base point; part (a) of Definition 2 asks that this test be efficient, which EthLib does not model.
+`prEvent_inverse_le_dlog` (`Proofs/Secp256k1/Security/InverseCase.lean`) bounds, in the key-only run with independent answers and new forward answers asked outside, the chance that the check passes on a point that was not a new forward query.
+The event does not require the flag of repeated answers to be clear, so with the fork index of the forward case it covers every run that wins.
+The bound is the advantage of a discrete-logarithm solver, which runs the forger once with the same test of the image; this is the step from Game G2 to Game G3 of the source.
+The solver's game is the discrete-logarithm game of the oracle framework, which draws the key from all scalars, while Definition 1 of the source draws it from the nonzero scalars.
+The two advantages differ by at most `1 / n`, where `n` is the number of scalars; no theorem states it.
+`keyOnlyAdvantage_le` (`Proofs/Secp256k1/Security/KeyOnlyBound.lean`) assembles these parts into the bound of Theorem 2 of the source, for a key-only forger with at most `q` queries to the bijection or its inverse on every key.
+The bound charges three adversaries built from the forger: the two discrete-logarithm solvers and the reduction to division resistance.
+It is a bound on the key-only game only.
+`forgeAdvantage_le_noCollisionAdvantage_add_collisionAdvantage` (`Proofs/Secp256k1/Security/Collision.lean`) is the first step of Theorem 1 of the source, from Game G0 to Game G1 of Figure 4.
+It charges a forgery on a new message with the hash of a signed one to a finder of collisions built from the forger, which samples the bijection lazily.
+The hash is fixed, so the bound charges that named finder and no adversary against collisions in general.
+`noCollisionAdvantage_le_programmed` (`Proofs/Secp256k1/Security/Programmed.lean`) is the step from Game G1 to Game G2 of Figure 5, where the signer programs the bijection; it costs the chance of a conflict, two pairs of the cache of the bijection that share a query or an answer.
+`prEvent_programmedExperiment_conflict_le` (`Proofs/Secp256k1/Security/Conflict.lean`) bounds that chance, for a forger with at most `q_Π` queries to the bijection or its inverse and `q_S` signing queries on every key, when the base point is nonzero and the encoding semi-injective.
+The signer tries up to `fuel` nonces per request where the source's tries one, so the source's `Q_s` programmed pairs become `fuel · q_S`; the check of the forgery may relay one more query, which Definition 4 of the source rules out, so its `Q_Π` becomes `q_Π + 1`.
+`keylessExperiment_evalDistEq_programmedExperiment` (`Proofs/Secp256k1/Security/Keyless.lean`) is the step from Game G2 to Game G3 of Figure 5: the game with a signer that reads only the public key has the same law, forgery, check result and final states, when the base point is nonzero.
+The source's claim that the forger wins as often in both games does not follow as written: its Game G2 records a pair of the bijection before its checks (line 14), while its Game G3 records one only when a nonce signs (line 40).
+The signer without the key here records the pairs of failed nonces too.
+`prEvent_keylessExperiment_win_le` (`Proofs/Secp256k1/Security/KeylessForger.lean`) charges a win of that game to two adversaries built from the forger: the key-only forger of Figure 6 of the source, which runs the game with its own bijection oracle, and a solver of the discrete logarithm.
+The two checks agree unless the most recent pair at the forgery's point is one that the signer programmed; that case gives the key, and the solver tries each candidate and keeps the one that gives the public key.
+Figure 6 of the source signs again at line 30 when the point is programmed, which may fail, so its claim that the key-only forger wins as often as Game G3 does not hold exactly; the bound here charges that case to the named solver instead, which adds one discrete-logarithm term to Theorem 1.
+The solver runs the game itself, with a lazy bijection; no theorem states its running time or the forger's.
+`forgeAdvantage_le_keyOnly` (`Proofs/Secp256k1/Security/ChosenMessageBound.lean`) assembles these steps into Theorem 1 of the source, for a forger with at most `q_Π` queries to the bijection or its inverse and `q_S` signing queries on every key: its advantage is at most the key-only forger's advantage, plus the advantage of the solver for a programmed point, plus the finder's advantage, plus the bound on a conflict.
+`forgeAdvantage_le` (same file) bounds the key-only forger's advantage in turn by `keyOnlyAdvantage_le`, with `q = q_Π`, which gives a bound on the chosen-message game by three solvers of the discrete logarithm, a reduction to division resistance, a finder of collisions, and terms in the sizes of the bijection's domain and of the scalars.
+It needs a nonzero base point, `2` nonzero in the scalars, a semi-injective encoding under which opposite points share their encoding, a normal form that keeps or negates `s`, and a test of the image that agrees with the search over the nonzero multiples of the base point; so it covers the case of Definition 2 (b) of the source with opposite points sharing their encoding, as for ECDSA, and not the injective case; the model's ECDSA scheme meets the hypotheses on the scheme by separate lemmas, and no theorem applies the bound to it.
+It keeps the departures of its steps from Theorem 1, among them: the signing oracle answers a repeated message from its cache, as RFC 6979 does, the hash is fixed and the bound charges named reductions, no running times are stated, the key is drawn from all scalars, `Q_s` becomes `fuel · q_S` and `Q_Π` becomes `q_Π + 1` in the conflict bound, the signer without the key records the pairs of failed nonces, and the forgery at a programmed point is charged to a solver of the discrete logarithm, one term more than the source's bound.
+The bound on a conflict keeps the three terms of the source's proof, in the form of its own module, before the source sums them into `3 Q Q_s / ((q - 1) / 2 - Q)`; no theorem compares the two.
+The departures of the key-only bound from Theorem 2 are listed with it, above.
+`ecdsa_verify_eq_verify_ecdsaScheme` (`Proofs/Secp256k1/Security/Refinement.lean`) proves that `verify` is the game's verification, with the bijection the identity, for `r` and `s` below `n`.
+`exists_signNonce_of_sign` proves that every signature from `sign` is the game's signature for some nonzero nonce; that is correctness of signing, and says nothing about how RFC 6979 draws the nonces.
+The game draws the bijection uniformly, so the bound on it applies to EthLib, where the bijection is the identity, only under the heuristic of the source that the identity behaves as a bijective random oracle.
+It would also need the pseudorandomness of RFC 6979, which no theorem states, and it ignores the 16-nonce limit and the failure of `sign` when `x_R >= n`.
+A forger of transactions only needs a key with the right address, so a bound for them also needs a term for the Keccak-256 hash of the key.
+The low-s rule of transactions only restricts the forger, so it needs no term.
+The model's encoding, the `x` coordinate as a 256-bit string, meets part (b) of Definition 2 of the source (`ecdsaScheme_semiInjective`), which their Lemma 2 proves.
 
 `ecdh_eq_ok_iff` (`Proofs/Secp256k1/Ecdh.lean`) states ECDH in the group of the curve.
 It is the Diffie-Hellman primitive of SEC 1 v2 §3.3.1, with no key derivation function.
@@ -421,7 +533,7 @@ The secret is then the `x` of their product, as 32 big-endian bytes.
 
 `verifyV4_negS` (`Networking/Proofs/Enr/Security.lean`) proves that a record with a 64-byte signature verifies exactly when its copy with `n - s` does, and `negS_ne_of_verifyV4` that the two differ.
 `ecdsaForgery_of_forgery` (`Networking/Proofs/Enr/Security.lean`) proves that a forged EIP-778 "v4" record gives a forgery of ECDSA with Keccak-256 on a fresh message.
-The security of records then rests on the chosen-message security of that ECDSA, which EthLib assumes and does not prove.
+The security of records then rests on the chosen-message security of that ECDSA, which EthLib assumes and does not prove; the bound on the chosen-message game above is proved only in the bijective random oracle model.
 
 ### alt_bn128
 
@@ -546,6 +658,92 @@ Under them, the counters of the text differ from each other and from `J_0`, the 
 `encrypt_shortTag` and `decrypt_shortTag` prove that both functions reject the 64-bit and 32-bit tags, which SP 800-38D Appendix C restricts.
 The Python tests check seven test cases of the NIST CAVP file `gcmtestvectors.zip`, one of them a forged tag that decryption rejects.
 
+### X25519 and ChaCha20-Poly1305
+
+The X25519 proofs cover the clamp of RFC 7748 §5 and the decoding of a coordinate (`Proofs/X25519.lean`).
+`decodeScalar_eq` proves that the clamp sets bit 254, clears bits 0 to 2 and bit 255, and keeps bits 3 to 253 of the key.
+`decodeScalar_mod_eight`, `le_decodeScalar` and `decodeScalar_lt` follow: a clamped scalar is a multiple of eight, at least `2 ^ 254` and below `2 ^ 255`.
+`val_decodeUCoordinate` proves that decoding clears bit 255 and reduces modulo the field prime, so a noncanonical coordinate is accepted.
+`decodeUCoordinate_encodeUCoordinate` proves that decoding the bytes of a reduced coordinate returns it.
+`ladder_mod_two_pow` proves that the bits of the scalar above bit 254 do not change the ladder.
+So no run of the ladder can observe the cleared bit 255; only the clamp theorems record it.
+`swap_ladder_decodeScalar` proves that a clamped scalar leaves no swap pending at the end of the ladder.
+No theorem relates the ladder to the curve, so it is not proved to compute a scalar multiple.
+
+The ChaCha20-Poly1305 proofs cover output length, counter exhaustion, rejection of a wrong tag and the round trip (`Proofs/ChaCha20Poly1305.lean`).
+`crypt_crypt` proves that the cipher, run twice under one key, counter and nonce, gives back its input.
+`decrypt_encrypt` proves that decryption of an honest ciphertext and tag returns the plaintext.
+`tag_eq_of_decrypt_eq_ok` proves that no other tag passes for that ciphertext.
+These are statements about the definitions alone, not about their security.
+The clamp of the Poly1305 key has its own theorem.
+`testBit_clampR` gives every bit of `r` without the mask, by its place in the little-endian 32-bit words of `r`: the top four bits of bytes 3, 7, 11 and 15 and the bottom two bits of bytes 4, 8 and 12 are clear, and every other bit of the low 16 bytes of the key is kept.
+So a clamp with another mask would fail it.
+`clampR_lt` bounds `r` by `2 ^ 124`.
+`poly1305Accumulator_lt` proves that the accumulator stays below the prime `2 ^ 130 - 5`, whatever `r` and the message, since each step reduces modulo the prime.
+No theorem relates ChaCha20-Poly1305 to an independent model of RFC 8439.
+The Python tests compare the bindings with the RFC 7748 and RFC 8439 vectors.
+The million-iteration X25519 vector requires `ETHLIB_SLOW_VECTORS=1`.
+
+### Noise XX and libp2p identities
+
+`readLibp2p_authenticates` (`Networking/Proofs/Noise/Identity.lean`) says that the read of message 2 or 3 accepts only a payload whose signature verifies on the static key that the message carries.
+The state then stores that remote, and completion returns it without reading a message or verifying the signature again.
+`complete_ok` holds for any state: the returned remote is the stored one, its static key is the remote static key of the handshake, and the ciphers are those of that handshake.
+`Produced.complete_authenticates` adds, for states that the libp2p initialize, write and read functions produce, that the signature verifies on that static key and that the public key decodes to the stored point.
+A caller that edits the state can therefore complete with a remote whose signature does not verify.
+`Produced.complete_isOk` says that completion of such a state after message 3 succeeds.
+These are acceptance theorems, not a proof of protocol security, confidentiality or constant-time execution.
+They relate the identity to the transport keys only through the shared handshake state.
+The transcript of Noise §5.2 has its own theorems (`Networking/Proofs/Noise.lean`).
+`chainingKey_foldl_mixHash` and `cipher_foldl_mixHash` prove that a run of transcript mixes leaves the chaining key and the cipher unchanged.
+`eq_or_collision_of_hash_mixHash_eq` proves that two mixes that end at one handshake hash started at one handshake hash and mixed the same bytes, or else names the two different SHA-256 inputs that hash alike.
+No theorem assumes or bounds the collision resistance of SHA-256, and none binds the whole transcript of a handshake.
+`unframe_frame` proves that reading back a written frame of the noise-libp2p "Wire Format" returns its message.
+No theorem says that the chaining key mixed a Diffie-Hellman output with the remote static key.
+Only the libp2p read verifies an identity, and completion checks that the stored remote has the remote static key of the handshake.
+The raw transport split of an XX state checks neither.
+The Python tests compare the raw XX handshake with a published test vector.
+No published vector covers the libp2p payload, so its tests check the keys and signatures with independent code.
+
+The bindings take explicit keys and state tuples.
+Callers must use fresh ephemeral keys and use the returned state after each successful cipher call.
+They must discard handshake state after an error.
+
+### Engine API authentication
+
+`Jwt.check_build_of_size` (`Engine/Proofs/Jwt.lean`) proves that a token built with a 32-byte secret passes with that secret at clocks within 60 seconds of its issued-at time.
+`Jwt.within_eq_true_iff_of_nonneg` and `Jwt.within_eq_true_iff_of_neg` give the clock comparison of the issued-at time in full, one for each sign of the exponent of the date.
+For a negative exponent the statement scales the bounds instead of dividing the date, so it is the exact comparison.
+They prove correct the two shortcuts that avoid expanding a huge exponent, where a test can run the shortcut but cannot compute the value it replaces.
+The builder validates the JSON it generates, and `Jwt.build_eq_ok` proves that this validation never fails.
+`Jwt.authenticate_eq_error_of_tag_ne` proves that a token whose tag differs from the HS256 tag of its parts is refused before any JSON is read.
+`Jwt.compact_signature_of_check` proves that an accepted token is the compact form of its parts with their HS256 tag under the secret.
+So the clock check accepts no other tag part for those parts.
+Keeping a party without the secret away from the reader also assumes HMAC unforgeability, and a captured token can be replayed within its 60 seconds.
+`Jwt.check_eq_false_of_algorithm_ne` proves rejection when the decoded algorithm differs from HS256.
+The Unicode escape of [RFC 8259 §7](https://www.rfc-editor.org/rfc/rfc8259#section-7) has its own theorems (`Engine/Proofs/Jwt/Json.lean`).
+`Jwt.Json.hex4_cons_eq_some_iff` proves that four hex digits, in either letter case, name the number they write in base 16.
+`Jwt.Json.hex4_eq_none_of_length_lt` proves that fewer than four characters are no escape.
+`hexValue?_hexDigitChar` and `hexValue?_toUpper_hexDigitChar` prove that those hex digits are read in lowercase and in uppercase.
+`Jwt.Json.unicodeEscape_eq_none_of_hex4` proves that an escape without four hex digits is refused.
+`Jwt.Json.unicodeEscape_eq_of_not_surrogate` proves that a value outside the surrogate range is returned as the code point it names.
+`Jwt.Json.unicodeEscape_eq_of_pair` proves that a high surrogate followed by an escaped low surrogate is returned as the code point of the pair.
+`Jwt.Json.unicodeEscape_eq_none_of_surrogate` proves that every other surrogate is refused: the grammar admits a lone surrogate ([§8.2](https://www.rfc-editor.org/rfc/rfc8259#section-8.2)), but this reader refuses one.
+`Jwt.Json.string_eq_none_of_control` proves that a character below `0x20` is refused when it comes next in a string unescaped.
+The total JSON reader has no theorem of full agreement with RFC 8259.
+These theorems do not establish HMAC unforgeability or constant-time execution.
+
+### ERC-2335 keystores
+
+The keystore proofs show that a short intermediate key, a mismatched checksum, or a key derivation beyond the caller's limits prevents decryption (`Proofs/Keystore.lean`).
+They do not prove Unicode normalization correct for every input, or prove the cryptographic security of the keystore.
+The Python suite compares NFKD with Unicode 16.0.0's normalization tests and checks the two ERC-2335 vectors.
+JSON text parsing stays in the export boundary; the specification consumes a `Lean.Json` value.
+Before parsing, the export refuses deep nesting, long digit runs and large positive exponents, which could exhaust the parser's stack, time or memory.
+Decryption takes the caller's limits on memory and work, and refuses a key derivation whose modeled memory or work exceeds them.
+The model counts bytes of buffers and calls of 64-byte block functions; no theorem shows that it bounds the code.
+The Python binding sets default limits.
+
 ### RIPEMD-160
 
 `compress_toBitVec` (`Proofs/Hash/Ripemd160.lean`) proves that the compression of one block, read as 32-bit vectors, is the compression of a model of the authors' pseudo-code.
@@ -561,6 +759,13 @@ It runs the blocks from its own initial value, and its digest puts the least sig
 The Python tests (`bindings/python/tests/precompile/test_ripemd160.py`) check the hash against the test vectors on Bosselaers' RIPEMD-160 page.
 
 ### KZG
+
+No text is agreed yet as the normative KZG specification.
+The specifications in consensus-specs point to this repository through a redirect that names no commit.
+The Final EIPs pin an older consensus-specs text.
+The [KZG README](EthLib/Cryptography/Kzg/README.md#the-normative-text) gives the three readings, and no one has settled on one.
+The theorems below are about the definitions of EthLib.
+Which source text EthLib's definitions match depends on the reading.
 
 The KZG and PeerDAS proofs use `Bls.pairingLaws`, which proves the pairing law of the check.
 Their theorems take no pairing-law hypothesis.
@@ -591,6 +796,9 @@ They take two hypotheses on the setup.
 `computeCellsAndKzgProofs_blob_spec_ofHex` and `recoverCellsAndKzgProofs_spec_ofHex` state the two theorems for the embedded setup, with neither hypothesis.
 Of the setup, they assume only that it decodes.
 
+`uncompress_KZG_SETUP_G2_MONOMIAL_1` (`Execution/Proofs/Evm/Precompiles/PointEvaluation.lean`) states that the point evaluation precompile uses `G2` point 1 of the embedded setup as `[tau]_2`.
+It also assumes only that the setup decodes.
+
 For a well-formed setup, `blobToKzgCommitment_represents` (`Proofs/Kzg/Commitment.lean`) proves that a blob's commitment holds its polynomial at the secret.
 On a well-formed setup (assumption D3), `blobToKzgCommitment_binding` in the same file proves that two blobs whose decoded values differ share a commitment only when the secret is a root of `p - p'`.
 Here `p` and `p'` are the interpolants: the polynomials of degree below 4096 that take each blob's decoded values on the domain.
@@ -608,10 +816,25 @@ The cases can overlap.
 They carry meaning only when an algebraic adversary outputs `f` and `g` over the setup's points, without `τ`.
 This reading is the algebraic group model, an assumption.
 For other choices, such as the constants that the points represent, the third case only restates the check.
-The second case is unlikely if the challenge hash is modelled as a random oracle.
-The third is unlikely if the discrete logarithm problem with the setup's powers of `τ` is hard.
-Both are assumptions, and no theorem here proves either bound.
+For this single check, no theorem bounds the probability of the second or the third case.
 It is not computational binding: no theorem bounds the cost of finding such polynomials without the secret.
+
+`blobBindingAdvantage_le` (`Proofs/Kzg/BlobBindingAdvantage.lean`) bounds an accepted blob batch that contains a commitment different from its blob's computed commitment.
+The game samples the setup secret uniformly in `Fr` and gives the algebraic adversary only the public setup powers.
+The adversary supplies polynomial representations for the group encodings in its queries and output.
+The theorem assumes that each representation of a valid encoding evaluates to its point at the secret, on every run.
+This hypothesis stands for the algebraic group model, an assumption; nothing restricts how the adversary computes its representations.
+The game rejects final batches above `n` blobs.
+With at most `qBlob` individual challenge queries and `qBatch` batch challenge queries by the adversary, the bound is `(qBlob + n) 4095 / r + (qBatch + 1) (n - 1) / r` plus the success probability of `setupSecretReduction`.
+Here `r` is the order of `Fr`.
+The reduction runs the same experiment once and recovers `τ` from roots of representation differences or the final batch error.
+The secret-recovery term is defined on the full setup powers.
+Root search is noncomputable in the model; no theorem proves the reduction's running time.
+`length_setupSecretCandidates_le_points` (`Proofs/Kzg/BlobBindingReduction.lean`) bounds the roots that the search tests by 4096 for each annotated point, plus 4096 for the final batch error.
+No theorem relates the secret-recovery term to the discrete logarithm or the strong Diffie–Hellman problem.
+`verifyBlobKzgProofBatch_ok_iff_symbolic` (`Proofs/Kzg/BlobBindingVerifier.lean`) connects the game's scalar acceptance equation to the concrete verifier at its concrete challenges.
+`verifyBlobKzgProofBatch_ok_iff_game` specializes it to openings that match the submission, as every successful challenge loop gives: when each blob challenge is the concrete hash of its blob and commitment, those openings are the concrete batch.
+
 `verifyKzgProofBatch_ok_iff_root` (`Proofs/Kzg/BatchBinding.lean`) states when the batch check of openings accepts, as an equivalence.
 Let opening `i` have commitment `c_i`, value `y_i`, point `z_i` and proof `w_i`.
 For a well-formed setup, its verdict is true exactly when its challenge `r` is a root of `P(X) = sum_i X^i (c_i - y_i - w_i (τ - z_i))`.
@@ -893,8 +1116,8 @@ In that second case the write fails and aborts the run.
 `memoryWrite_comm_of_disjoint` proves that two writes within memory to disjoint ranges commute.
 `memoryReadBytes_memoryWrite_memoryWrite_rev` proves the same read when the higher write comes first.
 From Berlin, the rule for SLOAD takes as a hypothesis whether the slot is cold, and charges 2100 or 100 by EIP-2929.
-`Logic.sstore` is the rule for SSTORE from Berlin to before Glamsterdam, in a frame that may change the state and holds more than 2300 gas.
-It charges `sstoreCost` and adds `sstoreRefund` to the refund counter, from the original, current and new words and whether the slot is cold.
+`Logic.sstore` is the rule for SSTORE from Berlin, with one counter of gas, in a frame that may change the state and holds more than 2300 gas.
+It charges `sstoreTotalCost`, the price and the state gas of the write, ignores the refill of state gas, and adds `sstoreRefund` to the refund counter, from the original, current and new words and whether the slot is cold.
 It takes the state that the write gives as a hypothesis, since the write needs the account of the current address.
 `Logic.log` (`Logic/Log.lean`) is the rule for LOG0 to LOG4, at every fork with the one-counter meter, in a frame that may change the state.
 It appends one log of the current address with the topics and the range of memory.
@@ -986,8 +1209,8 @@ Its new base agrees with the old one outside the touched slots, the moved and re
 `Logic.create_stored` proves this for CREATE.
 `Logic.create2_stored` proves this for CREATE2.
 `Logic.nonce_of_shape` proves that an account with the nonce and the code hash of an account that exists has its nonce.
-`Logic.Entered` gives the state and the substate that the frame of a message starts from, after the move of its value.
-`Logic.Entered.of_not_transfers` proves that a message that moves no value starts from the start state and the substate of its caller.
+`Entered` (`Execution/Proofs/Evm/Call/Run.lean`) gives the state and the substate that the frame of a message starts from, after the move of its value.
+`Entered.of_not_transfers` proves that a message that moves no value starts from the start state and the substate of its caller.
 `Logic.meets_runsAll` proves that the runner of the interpreter meets the specifications of a family of codes that call each other, at every bound.
 Each specification is a triple under the assumption that the whole family runs as specified, so a callee may call its caller back.
 Each specification holds from every frame that a message with its code enters, so a message may move a value.
@@ -1065,6 +1288,9 @@ The rules of `HoareUnder` hold for `HoareOn` with the same set: `of_hoare`, `of_
 `SpecOn.runFrame` proves that `runFrame` returns a stopped frame of `Q`, or fails.
 When it fails, a frame that the steps reach sends a message of `S`, and the runner fails on it.
 Then `runFrame` fails with the same error.
+`HoareOn.runFrame_of_ok` proves that a run that succeeds through such a triple goes on from a frame of `Q`, for a runner that meets the assumption.
+That run ends where the run from that frame ends.
+`Hoare.runFrame_of_ok` proves the same for a triple over the steps, under every runner.
 
 From Pectra, a call to an account whose code is an EIP-7702 delegation indicator runs the code of the delegate.
 `Logic.Routes fork state c route` (`Logic/Route.lean`) says which code a call to an account with the code `c` runs.
@@ -1081,6 +1307,12 @@ Its set holds only the message of the call, so a run may stop because the runner
 `Logic.callRoute` proves its case for CALL.
 Unlike `Logic.callWith`, neither rule asks that the code be no delegation, or that the fork come before Glamsterdam.
 `Logic.callStep_child` and `Logic.callKindWith` are their cases with no delegation, so the step has one proof.
+`Logic.callStep_fails_of_routes` (`Logic/CallSteps.lean`) proves that such a call fails, or halts the frame with an error, when its gas is below its price before the gas it passes on.
+That price is the access to the address, the access to the delegate if any, and the growth of memory.
+`Logic.callStep_deep_of_routes` proves that such a call at the greatest depth, with at least that price in gas, sends no message, pays only that price and pushes 0.
+`Logic.callStep_fails_of_missing` proves that from Pectra such a call fails when the lookup of the code of the delegate fails.
+Instead of failing, the step may halt the frame with an error.
+Each holds for every kind of call with the one-counter meter: the first two from Berlin, the third from Pectra.
 
 A triple says about the state after a message only what its assumption says, so a proof needs an assumption on what the callee does.
 `Logic.KeepsOn runChild S R` (`Logic/Keeps.lean`) says that each message of `S` that the runner ends with no error keeps the relation `R`.
@@ -1097,6 +1329,13 @@ It leaves free the block before the transaction, the created accounts, the wiped
 Each such call runs the code that `to` holds in `S`, along its route, with any data, any gas and any reservoir.
 `Logic.CallSends.sentVia` proves that the message of a CALL with no value along a route is such a call, via the state before the call.
 
+`StepRules fork R` (`Execution/Proofs/Evm/Call/StepRules.lean`) lists the rules for a transitive relation `R` of two frames.
+`R` must hold of each step that keeps the state up to the records of reads.
+It must also hold of each write of storage, transient storage, a log or SELFDESTRUCT, of the rise of a nonce, and of a child taken in by its caller.
+`StepRules.step` proves that such a relation holds of every successful step, given it for the frame that ends each message sent.
+`StepRules.runFrame` proves the relation for a successful run of a frame.
+`StepRules.processMessage` turns it into a fact of every call and creation, by induction on the gas of the message.
+
 The block of a transaction state is the state before the block, with the writes of the block so far.
 A rollback restores the storage of a snapshot only when both states have the same block.
 `parentResult_step` (`Execution/Proofs/Evm/Call/Parent.lean`) proves that every successful step keeps the block of the state, at every fork.
@@ -1109,6 +1348,16 @@ A step that sends a message keeps it once the frame that ends the message has th
 `KeepsParent.keepsOn` (`Logic/Keeps.lean`) proves that such a runner keeps the block on every set of messages of `Logic.KeepsOn`.
 `processMessage_sameOutside_of_error` proves that a call that ends with an error reads as the state it is sent from at every address, at every fork.
 That covers the account, the storage and the transient storage, and `getStorage_processMessage_of_error` states it for one storage word.
+
+From Cancun, `deletesCreated_processMessage` (`Execution/Proofs/Evm/Call/ToDelete.lean`) proves that a call marks for deletion only accounts already marked or created in the transaction.
+From Paris, `touchedAccounts_processMessage` (`Execution/Proofs/Evm/Call/Touched.lean`) proves that a call touches no account beyond those of its substate.
+`sameOutside_deleteAccounts` (`Execution/Proofs/Transactions/Deletion.lean`) proves that the deletions at the end of a transaction change only its accounts to delete and its touched accounts.
+`sameOutside_deleteAccounts_of_dencun` proves that, from Cancun, the deletions after the settlement of gas change only the created accounts of the settled state, when its message starts from the substate of a transaction.
+`runTransaction_deletes_created` states this for the run of a transaction, with each of its steps named; there the created accounts are those the transaction created.
+Before Glamsterdam, `runTransaction_removes_marked` (`Execution/Proofs/Transactions/Deletion.lean`) proves that each account marked for deletion by a frame that no revert undoes is absent after the transaction, when its message ends without an error.
+Before Cancun, `runTransaction_removes_selfdestructed` states it for the account that runs SELFDESTRUCT in such a frame.
+`Visits` (`Execution/Proofs/Evm/Logic/Marks.lean`) names those frames: the frames that a run reaches, and those of the code of each message on the way that ends without an error.
+`toDeleteLe_of_visits` proves that the frame that ends such a run, without an error, marks every account that a visited frame marks.
 
 The facts of `Logic/GasMono.lean` and `Logic/LessGas.lean` are for the one-counter meter, the meter of every fork before Glamsterdam.
 `Logic.addGas k` adds `k` to the gas of a frame.
@@ -1126,6 +1375,12 @@ Both hold for every bound on the gas of messages and every runner of messages.
 `Logic.SpecG.low` proves that a specification from a frame with `k` more gas then holds of the end of the run with `k` more gas.
 `Logic.SpecG.halted` proves that the run then ends in the normal halt of a specification from a frame of `At`, with `k` less gas.
 `Logic.SpecG.not_ok` proves that the run does not end with no error when every frame of the postcondition has an error.
+`Logic.halted_of_specG` takes a specification over `Logic.StepG` to a normal halt that pays `cost`, from a frame of `At` with every gas from some bound on.
+The specification needs to hold only with at least `cost` gas.
+It proves that every run of that frame that succeeds, with any gas, had at least `cost` gas.
+That run ends in that halt with exactly `cost` less gas.
+`Logic.no_ok_of_specG` proves that every frame that the loop runs a frame of `At` to, with any gas, has an error.
+It assumes a specification over `Logic.StepG` to frames with an error, with every gas from some bound on.
 `Logic.Stuck` is a running frame from which the step fails, and from it with any less gas.
 `Logic.not_ok_of_reaches` proves that a run does not end with no error when these steps from the frame with `k` more gas reach a stuck frame.
 `Logic.no_ok_stuck` proves the same for a frame of `At` that reaches a stuck frame with every gas from some bound on.
@@ -1161,6 +1416,27 @@ It assumes that these steps reach a stopped frame from `l` with `k` more gas.
 `Logic.no_error` proves that the loop runs a frame of `At` to a frame, with any gas.
 It assumes a specification over these steps from that frame with every gas from some bound on.
 Both hold for every bound on the gas of messages and every runner of messages.
+
+`Logic/RunsOk.lean` says when a run succeeds, that is when the loop ends its frame in a frame with no error.
+`Logic.RunsOk` is that condition, for any lawful meter.
+`Logic.Spec.runsOk` proves that a specification to frames with no error gives a run that succeeds, under every runner.
+`Logic.SpecOn.runsOk` proves the same for a specification whose runner may fail only on the messages that it names.
+It assumes a runner that never fails on those messages.
+`Logic.not_runsOk_of_lt` proves that no run with less gas than `cost` succeeds, from a specification to a halt that pays `cost`, as above.
+
+### System contracts
+
+The four modules under `Execution/Proofs/Blocks/SystemCall/` for beacon roots, historical block hashes, withdrawal requests and consolidation requests prove the effects of their deployed bytecode.
+Their `systemCall_set` and `systemCall_dequeue` theorems hold from each contract's activation, with the gas meter of the fork, including the state gas meter from Glamsterdam.
+They require the specified bytecode at the contract's address.
+The queue theorems assume bounds on the storage counters, and the history theorem requires a block number from 1 to below `2^256`.
+
+`Logic.Reaches.followsMeter` lifts a normal one-counter run to the state gas meter when its execution gas initially covers that counter.
+The counter pays execution gas and state gas and ignores refills, so it gives a conservative budget.
+`Logic.SupportedCode` checks each opcode, skipping PUSH data, against a fixed list of instructions.
+The list leaves out GAS and every instruction that sends a message.
+The lifted run has the same fields outside its meter, including its state and output.
+`SystemContract.systemCall_of_writesStorage` applies this result to the actual system-call runner and its initial reservoir.
 
 ### SHA-256 precompile
 
@@ -1270,6 +1546,47 @@ So `bls12MapFpToG1_isOk_iff` and `bls12MapFp2ToG2_isOk_iff` (`Map.lean`) prove t
 
 No theorem relates the module to the execution-specs code it follows.
 
+### A transaction whose message fails
+
+`Execution/Proofs/Transactions/Failed.lean` states what a transaction leaves when its message fails, before Hegotá.
+Its first theorems bound the writes to the sender, the beneficiary and the authorities that the authorization signatures name.
+
+`buyGas_sender` in `Settlement.lean` proves that buying gas raises the nonce of the sender by one and takes the fees from its balance.
+`buyGas_keeps` proves that it changes no code hash of the sender, no word of storage and no code.
+`settleGas_accounts` proves that the settlement refunds the sender and pays the priority fee to the beneficiary.
+It changes no nonce, code hash or code.
+Storage stays at the sender when its nonce is not 0, and at the beneficiary unless it is deleted.
+
+`authority_applyAuthorization` in `Authorization.lean` proves that one accepted authorization in scope sets the code hash of its authority to that of the delegation code, and raises its nonce by one.
+`foldlM_applyAuthorization_authority` unrolls the whole list for an authority whose code is empty or a delegation indicator.
+`acceptedBy` lists the authorizations that such an authority accepts, in order: those in scope, signed by it, with its nonce at that point.
+After the list, the authority has one more nonce for each of them and the code of the last one, and the rest of its account stays.
+The hypothesis on the code matters: an authority with other code refuses every authorization.
+`foldlM_applyAuthorization_keeps` covers such an authority, under the hypothesis that no authorization sets a code with its code hash.
+`processMessageCall_of_halt` in `Process.lean` puts the state back to the state before the authorizations when the message halts before its first frame, as EIP-8037 asks.
+`processMessageCall_reads_of_error` proves that a failed frame reads as the state of its first frame, so a failed call keeps its accepted authorizations, as EIP-7702 asks.
+
+`runTransaction_values_of_error` combines these results for one gas meter.
+It names the output of the message call.
+It gives the nonce, the code hash and the balance of every address against the state before settlement.
+It gives the storage of every address but a deleted beneficiary.
+That state reads as the state after the gas purchase when the transaction creates a contract or its first frame never starts.
+When the first frame of a call starts and fails, it reads as the state that the authorizations leave.
+`processTransaction_values_of_error` gives the same conclusion for every fork before Hegotá, with the gas meter of that fork.
+`processTransaction_authority_of_error` gives each authority whose code is empty or a delegation indicator its values after the transaction.
+Its nonce is its nonce before the transaction, plus one for the sender, plus one per accepted authorization.
+Its code hash is that of the code the last one sets.
+From Glamsterdam it needs the first frame of the call to start, which `FirstFrameHalts` denies.
+Up to BPO5 it needs nothing more, since `aborts_of_prepareFirstFrame_of_lt_glamsterdam` in `Process.lean` shows that a call halts before its first frame only with an error that aborts the run.
+`processTransaction_authority_of_firstFrameHalts` covers the halt from Glamsterdam: every authority keeps its code hash and its nonce, plus one for the sender, as EIP-8037 asks.
+`processTransaction_authority_keeps_of_error` covers an authority with other code, which refuses every authorization: its account and its storage stay.
+It assumes that no authorization sets a code with the code hash of the authority.
+No theorem yet gives the storage of an authority that takes a delegation.
+From Paris, an authority left empty by an authorization to the zero address is deleted with its storage, so that claim needs a condition.
+`processTransaction_selfAuthorization_of_error` in `Replay.lean` applies the first theorem to a sender that signs its only authorization with the nonce of the transaction plus one.
+It ends two nonces above the transaction.
+`block_of_output` proves that the block after the transaction reads as the state that the transaction leaves.
+
 ### Transaction gas
 
 Four theorems in `Execution/Proofs/Transactions/Process.lean` give the gas used and the block gas of a transaction that runs, before Hegotá.
@@ -1281,7 +1598,85 @@ Its gas left is the execution gas left plus the reservoir left, and it gives the
 At Glamsterdam, a negative state gas used counts as 0 in both block gas counts, a case that EIP-8037 leaves open.
 From Hegotá a run fails as not yet specified, so there is no gas used to state.
 
+`prepareFirstFrame_of_applyAuthorizations` gives the first frame of a call that moves no ether, after its authorizations.
+`prepareFirstFrame_of_applyAuthorizations_error` proves that an error of the authorizations is the error of the first frame.
 `prepareFirstFrame_of_value_eq_zero` gives the first frame of a call that moves no ether and applies no authorization.
+
+### The supply of ether
+
+`Execution/Proofs/State/Supply.lean` defines the supply of a transaction state as the sum of the balances of all its accounts.
+`Execution/Proofs/Evm/Call/Supply.lean` proves that no call or creation raises it, at every fork.
+`processTransaction_supply_le` in `Execution/Proofs/Transactions/Supply.lean` proves that a transaction lowers it by at least its burned fees: the base fee times the gas used, and the blob fee.
+It assumes that the gas limit covers the least gas and that the price per gas covers the base fee, which the checks of the block ensure.
+
+The equality holds in two cases.
+`processTransaction_supply_of_glamsterdam` gives it from Glamsterdam, where SELFDESTRUCT and the deletions keep every balance.
+`processTransaction_supply_of_dencun` gives it from Cancun for a transaction that creates no account.
+
+Before Cancun, a SELFDESTRUCT whose beneficiary is its own account burns that balance inside the message, and the deletions burn what a marked account received after it.
+The same holds from Cancun until Glamsterdam for a transaction that creates an account.
+`processTransaction_supply_eq` in `Execution/Proofs/Transactions/Burn.lean` gives the exact change for every transaction that runs, at every fork, these cases included.
+The supply after the transaction, plus the burned fees, the burns of SELFDESTRUCT and the deleted balances, is the supply before.
+The burns come from a certificate of the run of the message, `RunBurns` in `Execution/Proofs/Evm/Call/BurnRun.lean`.
+Each rule of the certificate takes one equation of the interpreter: a step from a running frame, a halt, a stop, a resume, a failed resume, the choice of a precompile, the entry of a call, its rollback, or the deposit of code.
+Its other premises are side conditions that the run implies, such as the block of the state it keeps.
+So a certificate follows the run step by step.
+`RunBurns.ended_eq` proves that two certificates from the same start end in the same frame, and `RunBurns.total_eq` that they have the same total.
+The log of a certificate records each burn of SELFDESTRUCT, and a frame that rolls back, or a creation whose deposit of code fails, drops what it burned.
+`RunBurns.counted` proves that each burn the log counts is the burn of a step that runs SELFDESTRUCT, above 0, in the account the burn is from.
+That step starts from a running frame that the run reaches, as `RunReaches` follows the same rules as the certificate.
+The deleted balances are read after the gas is settled and before any account is deleted, once for each account.
+`processTransaction_transactionBurns` proves that every transaction that runs has a certificate, and `TransactionBurns.unique` proves that all its certificates give the same two amounts.
+From Glamsterdam, `TransactionBurns.eq_zero_of_glamsterdam` proves that both amounts are 0.
+`processTransaction_supply_eq` makes the same two assumptions as `processTransaction_supply_le`.
+
+`Execution/Proofs/Blocks/Burn.lean` gives the exact change of the supply across a whole block, and `Execution/Proofs/Blocks/Supply.lean` derives the bound and the Glamsterdam equality from it.
+The block creates the wei of its withdrawals from Shapella, by EIP-4895, and of its rewards before Paris.
+The DAO transfer only moves wei.
+`stateTransition_supply_le` proves that the supply after the block plus the burned fees is at most the supply before plus the created wei, at every fork that the transition runs; it fails from Hegotá.
+`stateTransition_supply_of_glamsterdam` proves the equality from Glamsterdam.
+`stateTransition_supply_le_of_lt_glamsterdam` writes the burned fees from the header before Glamsterdam: the gas used and the blob gas used, each at its base fee.
+From Glamsterdam the gas used of the header is the larger of the execution gas before the refunds, by EIP-7778, and the state gas, by EIP-8037, so it does not give the burned fees.
+There the theorems take the fees from the body that the transition runs.
+`stateTransition_supply_eq` in `Execution/Proofs/Blocks/Burn.lean` gives the exact change at every fork that the transition accepts.
+It adds the created wei and subtracts the burned fees, the surviving SELFDESTRUCT burns and the deleted balances.
+`BodyBurns` certifies the system calls before the transactions, each transaction in order, and the calls that read requests.
+The system calls also carry burn logs, since the theorem assumes no particular code at their addresses.
+`BlockLosses.transactions` retains each transaction's burn log and deleted balances.
+`BodyBurns.total_eq` shows that two certificates of the same body give the same total of losses, when the block has at most two ommers before Paris, as its checks enforce.
+So the run fixes that total.
+From Glamsterdam, `BodyBurns.total_eq_zero_of_glamsterdam` proves that the total of losses is 0.
+
+### The authorizations of EIP-7702
+
+`Execution/Proofs/Transactions/Authorization.lean` covers every case of one authorization, at every fork.
+`applyAuthorization_cases` proves that an authorization that succeeds is skipped, refused, or accepted after it pays and delegates.
+`applyAuthorization_of_accepts_of_pay` gives an accepted authorization from what its payment leaves.
+`applyAuthorization_of_payAuthorization_error` proves that a failed payment stops the authorizations with its error.
+`applyAuthorization_of_authorityAccepts_error` proves that an authority whose code cannot be read stops them with that error.
+`payAuthorization_eq_ok_iff` proves that from Glamsterdam a payment succeeds exactly when its charge does.
+`state_payAuthorization` proves that a payment keeps the state, the accesses and the refund.
+`sameOutside_delegate` proves that a delegation changes no account, storage or transient storage but the authority's.
+`getCode_delegate_of_ne` proves that a delegation keeps the code under every hash but the hash of the code it sets.
+`getCode_delegate_self` proves that a delegation stores the code it sets under its hash, when that hash is not the hash of the empty code.
+
+Real code is neither empty nor a delegation indicator.
+`authorityAccepts_of_code` proves that an authority with real code refuses every authorization.
+`foldlM_applyAuthorization_keeps` proves that the authorizations keep the account, storage, transient storage and code of an address with real code.
+It assumes that no authorization of the list carries a code to set whose Keccak-256 hash is the code hash of that address.
+When the state stores each code under its own hash, only a collision of Keccak-256 breaks this assumption.
+`meter_foldlM_applyAuthorization_of_lt_glamsterdam` proves that up to BPO5 the authorizations keep the meter.
+
+The two theorems below hold for any recovery of an authority.
+Both assume that the state holds the code of every account.
+`foldlM_applyAuthorization_isOk_of_lt_glamsterdam` proves that up to BPO5 the authorizations succeed over any meter.
+`foldlM_applyAuthorization_isOk` proves that the authorizations succeed, and from Glamsterdam take at most 227790 execution gas times their number.
+From Glamsterdam, it assumes that the meter holds that much gas for every authorization.
+From Glamsterdam, it also assumes that the state holds the code of every account before the transaction.
+From Glamsterdam, it also assumes that every charge within the gas left succeeds and takes at most its amount.
+
+`chargesWithin_nat` proves this last condition for the meter up to BPO5.
+`chargesWithin_stateGasMeter` proves it for the meter of EIP-8037.
 
 ### Merkle Patricia Trie
 
@@ -1349,6 +1744,16 @@ The first trie may be fixed before the run, so the same bound covers a second tr
 That bound is still `Q^2 / N`, not a sharper fixed-target bound.
 `Q` counts every hash call of the experiment, repeats included, and the extraction makes many: each proof level rebuilds its subtree.
 
+`verifyAccountRange_complete` and `verifyStorageRanges_complete` (`Execution/Proofs/Network/SnapRangeComplete.lean`) prove that honest snap answers from secured tries pass their checks, or `findCrossCollision` returns a Keccak-256 collision among proof nodes.
+The keys are listed by increasing hash, and the proof contains the proofs of the start and the last entry.
+That order assumes the keys of each trie have distinct Keccak-256 hashes; no search returns two keys with one hash.
+The account theorem uses successful slim and full encodings of each account; `fullAccount_encode_slimAccount` proves that the conversion returns the full form.
+The storage theorem assumes whole tries before the last range; every range starts at the requested hash for one account and at the zero hash for several.
+`verifyAccountRange_complete_nil`, `verifyStorageRanges_complete_nil`, `verifyAccountRange_whole` and `verifyStorageRanges_whole` cover empty last ranges and whole tries; whole tries need no proof and no collision alternative.
+An empty AccountRange with no proof is the empty reply `noState`, rather than a claim about the trie.
+`findCrossCollision_self` shows that the search finds none when the sent proof is the honest one and holds no collision.
+No theorem bounds the probability that `findCrossCollision` finds a collision.
+
 An answer of `eth_getProof` (EIP-1186) is checked against a state root by `AccountProof.verify` (`Execution/State/AccountProof.lean`).
 It checks the account proof, then each slot proof against the storage root of the answer.
 `verifyAccount_sound` and `verifySlot_sound` (`Execution/Proofs/State/AccountProof.lean`) carry `verifyProof_sound` over to the fields of the answer.
@@ -1392,9 +1797,155 @@ The state must hold the root of the checkpoint at its epoch and be at that epoch
 The answer is then whether the current epoch is at most the epoch of the checkpoint plus the period.
 By `isWithinWeakSubjectivityPeriod_of_slot_le`, a checkpoint within its period at some slot is within it at every earlier slot.
 
-No theorem says that the period gives the safety margin that the rule intends.
-That margin is the claim of the analysis behind the rule, and EthLib does not model it.
+From Electra, `accountable_safety_of_weakSubjectivityPeriod` (`Consensus/Proofs/Transition/WeakSubjectivitySafety.lean`) relates the period to the safety margin that the rule intends, under an assumption on the change of the validator sets.
+The trusted set is the active validators of the state at the checkpoint, weighed by their effective balances, with at least one increment of stake.
+Take two conflicting finalized checkpoints of the Casper FFG model.
+The change of a set since the trusted set counts the stake that joined plus twice the stake that left.
+Assume that the change of each justified set between their epochs is at most `3 c` for each of the `n` epochs of churn, the period less the withdrawal delay, with `c` the churn of the period.
+Then the slashable validators hold at least `1/3 - SAFETY_DECAY/100` of the trusted stake, `7/30` with `SAFETY_DECAY` at 10.
+The arithmetic is `safetyMargin_of_balanceChurnPeriod_eq_ok`, from `200 n c ≤ SAFETY_DECAY · t`.
+In Electra an epoch adds at most the activation-exit churn `a ≤ c` and removes at most `c`, consolidation sources included, so its change is at most `a + 2 c ≤ 3 c`.
+From Gloas an epoch changes the set by at most three times the weighted churn, plus 4 Gwei of rounding when the consolidation churn is zero.
+The queues carry unused churn to later epochs, so the bound can hold over the window without holding in each epoch.
+No theorem yet derives it from the state transition, and the model fixes the effective balances over the window.
+The rule spends the withdrawal delay on keeping exits slashable and the other epochs of the period on churn, and the assumption takes the change over those epochs as given.
+Activations have no such delay, and a validator outside the registry of the checkpoint weighs zero in the model.
+The beacon chain weighs the votes of each epoch at the effective balances of that epoch.
+Top-ups, the balance that a consolidation moves to its target, rewards and penalties all change those balances during the window.
+The theorems weigh every vote at the balances of the checkpoint, so they reach a chain only once those changes are bounded, and no theorem bounds them yet.
+
+`Consensus/Proofs/ChurnReservations.lean` bounds the balance that the churn updates of exits and consolidations reserve, from Electra, when they run in turn on one state.
+These updates keep the slot and the validators, so the churn stays fixed.
+Their sum fits the churn left at the start plus one full churn for each later epoch of the queue.
+The bounds also hold for an idle queue, whose earliest open epoch is before the first permitted epoch.
+The exact equalities require the first permitted epoch to be no later than the earliest open epoch at the start.
+In a block, other writes to the registry and to the pending queues come between these updates, and no theorem yet covers that interleaving.
+Nor does any theorem yet bound how the churn changes between slots, or derive the change of the active set.
+
+From Phase 0 to Deneb, `accountable_safety_of_weakSubjectivityPeriod_of_lt_electra` covers the period in part.
+The rule counts `N` active validators of average balance `t` ether, rounded down, a largest effective balance `T` ether, a churn of `delta` validators and `Delta` top-ups per epoch.
+The theorem assumes each justified set gains and loses at most `delta` validators for each of the `n` epochs of churn, with `delta` the churn at the checkpoint.
+It also assumes every effective balance at most `T`, with `T` a whole number of ether.
+With large balances, `230 T < 320 t`, the rule's epochs for churn always satisfy `20 n delta T ≤ N t`, and so keep the margin.
+`churn_le_of_phase0PeriodEpochs_eq_ok` gives that inequality for the epochs of the rule.
+The rule takes the longer of those and its epochs for top-ups, so the theorem also assumes that the epochs for top-ups satisfy the same inequality.
+Top-ups change a balance, which the model leaves out, and in the model a longer period only allows more churn.
+The rule does not imply that hypothesis: with `N = 2^23` validators of 32 ether, `delta = 128` and `Delta = 512`, the rule takes 6280 epochs for top-ups, while the churn allows 3276.
+Over 6280 epochs, the churn of validators alone lowers the bound of Gasper Theorem 8.3 to about 14% of the stake.
+With small balances, `230 T ≥ 320 t`, no theorem relates the period to the margin.
 The Python suite checks the periods against the three tables of the rule, except for the rows whose states take minutes to build.
+
+### Inactivity leak
+
+`Consensus/Proofs/Transition/InactivityLeakBound.lean` bounds the number of epochs after which a leak brings the effective balance of an absent validator to a threshold.
+`InactivityLeakStake.lean` deduces that the voters then hold two thirds of the active stake.
+Both take the balance, the score and the effective balance of each epoch as given sequences, not derived from the state transition.
+
+`InactivityLeakEpoch.lean` proves one link of that derivation: the leak lasts from one slot or epoch transition to the next, unless finality advances.
+In an epoch transition from a leaking state, the state that justification returns still leaks, unless the finalized epoch rises (`processEpoch_finalized_lt_or_isInInactivityLeak`).
+The steps after justification read the leak test on that state, or on a later one with the same slot and finalized checkpoint.
+One slot from a leaking state ends in a leaking state, unless the finalized epoch rises (`advanceSlot_finalized_lt_or_isInInactivityLeak`).
+No theorem yet derives the sequences themselves, such as the condition that the balance of an absent validator never rises.
+
+### Fast confirmation rule
+
+`Consensus/ForkChoice/FastConfirmation.lean` holds the fast confirmation rule of [arXiv 2405.00549v4](https://arxiv.org/abs/2405.00549v4).
+The rule weighs the committees of a range of slots exactly.
+Each active member of their union counts once, by its effective balance in the source of balances, and a range with a whole epoch weighs the total active balance.
+An earlier form of the rule estimated that weight as an average per slot, which is not an upper bound on a given committee.
+[A counterexample on #1458](https://github.com/ethereum/EthLib/issues/1458#issuecomment-6764027413) shows that the estimate lets the rule confirm a block that an attack then reorgs, under the assumptions of the paper.
+The pinned fast confirmation vectors of consensus-specs `v1.7.0-beta.4` were generated with that estimate.
+In 24 of them, five cases at several forks, the rule now confirms another block, and `tests/parity/disagreements.toml` lists them as expected failures.
+The vendored fast confirmation cases in `tests/consensus/fork_choice` still pass.
+From Gloas the discount for empty slots also counts the votes for the pending node of the parent, which the rule of consensus-specs `v1.7.0-beta.4` leaves out.
+No pinned vector reaches that case, so review alone checks it until the vectors move to a release with it.
+
+`stake_le_computeCommitteeWeightBetweenSlots` (`Consensus/Proofs/ForkChoice/FastConfirmationIndicators.lean`) shows that the weight covers the stake of the active members of the committees.
+`stake_le_computeCommitteeWeightBetweenSlots_of_covered` shows that the weight of a range with a whole epoch covers the stake of every validator active in the source of balances.
+`lt_two_mul_honest_support_of_isOneConfirmed` then gives Lemmas 4 and 3 of the paper for a block that the store confirms.
+Twice its honest support, plus the discount for empty slots, exceeds the committee weight since its parent plus the boost.
+It takes any set `W` of validators whose stake the committee weight of the range covers.
+It assumes that the Byzantine validators hold at most the configured share of the stake of `W`.
+That is Assumption 2 of the paper when `W` is the set of active members of the committees of the range.
+It also assumes that no validator the store knows to equivocate is honest.
+It also assumes that the effective balances of those validators are whole numbers of 100 Gwei, since the store rounds the weight down to 100 Gwei for its share of the adversary.
+`lt_two_mul_honest_supportersOf_of_isOneConfirmed` (`Consensus/Proofs/ForkChoice/FastConfirmationSets.lean`) builds the supporters, the equivocators and the committee members from the store, and their stakes are the store's numbers.
+It replaces that assumption with an invariant of the state: each effective balance of the source of balances is a whole number of increments.
+It also assumes that the increment of the preset is a whole number of 100 Gwei, as 10^9 Gwei is.
+No theorem yet derives that from the state transition.
+The update of effective balances keeps it, but the other steps and the upgrades have no proof.
+It also assumes that each supporter of the block is a member of the committees of the range.
+No theorem yet proves that assumption.
+The store checks a vote against the committees in the state of its target, while the rule reads them in the state of the head.
+In a store with a forward clock, `Store.ForwardReachable.votesHaveOrigins` gives each latest vote the facts of its attestation.
+From those facts, `VoteOrigin.exists_mem_committee` (`Consensus/Proofs/ForkChoice/VoteOrigins.lean`) places the voter in a committee of the slot of its attestation, in the state of its target.
+`mem_getCommitteesBetweenSlots` (`Consensus/Proofs/ForkChoice/FastConfirmation.lean`) places each member of a committee of a slot of the range, in the state of the head, among the members that the rule reads.
+What remains is that the slot of the vote lies in the range, and that the two states agree on the count and the committees of that slot.
+They should agree when both states hold the same RANDAO mix of the epoch `MIN_SEED_LOOKAHEAD + 1` epochs before the epoch of the slot, two in both presets, and the same active validators in the epoch of the slot.
+No theorem yet proves that.
+For a range with part of an epoch that should hold when the head descends from the block, since the range then lies in the epoch of the block and the next one.
+Both corollaries apply `lt_two_mul_honest_supportersOf_of_weighed`, which builds those sets for any `W` that holds the supporters and the active members of the committees, and whose stake the weight covers.
+`lt_two_mul_honest_supportersOf_of_covered` drops that assumption when the range of the adversary holds a whole epoch.
+Its set `W` is then every validator active in the source of balances, which holds each supporter.
+Its Byzantine bound is Assumption 2 when every validator active in the source is a member of a committee of the range.
+Otherwise it implies Assumption 2 when the validators that have left the committees are Byzantine, as Assumption 1 of the paper ensures.
+With an honest one gone the two bounds are incomparable.
+The tally of the source still counts the votes of validators that have left the committees, so the proof bounds their stake.
+For a range with part of an epoch the assumption on the supporters stays.
+Like the paper, the theorem takes a static set of validators, Assumption 1.
+The honest support of the target of the current epoch takes the total active balance less the weight of the committees so far as the weight still to vote.
+No theorem proves that, which rests on the shuffling of the head and its pulled-up state agreeing on the active validators of the epoch.
+Each member of the committees must also be in the source of balances, or the rule fails; no theorem bounds the epochs between that source and the range.
+
+`Store.parentVotersOf` in `Consensus/Proofs/ForkChoice/FastConfirmationSets.lean` names the committee members whose recorded votes the discount for empty slots counts.
+They are active and not slashed in the source of balances, are not known equivocators, and vote for the pending parent node or the parent payload node that the child builds on.
+`exists_stake_parentVotersOf_of_computeEmptySlotSupportDiscount` shows that the discount is their stake less the adversarial weight of the empty slots, with subtraction truncated at zero.
+If the parent sits at an earlier slot than the child, both counted nodes are ancestors of the pending child node, including from Gloas.
+The ancestry needs only the two block reads and that local slot order, not `Reachable` or `ParentsBelow`.
+`le_honest_parentVotersOf_of_computeEmptySlotSupportDiscount` shows that the discount takes off at most the honest stake of these voters.
+It assumes Assumption 2 on the active members of the empty-slot committees, no honest known equivocator, aligned effective balances, and an increment divisible by 100 Gwei.
+These are store-local facts: no theorem here shows that a recorded honest vote is its voter's latest actual vote, or that it remains the recorded vote at a later store.
+
+`Consensus/Proofs/ForkChoice/FastConfirmationConfirmedRoot.lean` states where the confirmed block of a slot comes from.
+`Store.onFastConfirmation_confirmedRoot` shows that the rule starts from the block stored before, the finalized block or the observed justified block.
+It keeps the block stored before only when that block is in the chain of the head, and at the first slot of an epoch only when `isConfirmedChainSafe` accepts it.
+It takes the observed justified block only at the first slot of an epoch.
+That block must then be in the epoch before the current one, and its checkpoint must be the unrealized justification of the head.
+The rule stores that block, or a later root of the walk of `getAncestorRoots` from that block to the head.
+That root and each root before it in the walk then pass `isOneConfirmed`, with the votes of the state of the observed justified checkpoint.
+The rule makes two walks, and `Store.getAncestorRoots_of_append` in `Consensus/Proofs/ForkChoice/AncestorRoots.lean` shows that the second walk is the part of the first walk after the root where the first walk stopped.
+No theorem yet shows that the roots of a walk are in the chain of the head.
+
+`foldlM_onFastConfirmation_confirmedRoot` turns those four cases into an induction along a list of stores, one fast confirmation for each.
+A property of the confirmed block holds at the end when the three starts have it and a one-confirmed walk keeps it.
+
+These theorems prove no safety: no theorem yet shows that a start is safe, or that a one-confirmed walk keeps a block in the chain of every honest head.
+They do not record every check of the rule.
+For the start they leave out the other checks that compare the epochs and the slots of the blocks.
+For the walks they leave out the checks on the epochs of the start and of the walked blocks.
+They also leave out the check that the head of the slot before holds each block of the first walk.
+They leave out the checks that a voting source or an unrealized justification is recent.
+They also leave out `willNoConflictingCheckpointBeJustified` and `willCurrentTargetBeJustified`, which are about the justification of the target of the current epoch.
+No theorem yet relates the list of stores to the stores of an honest validator in an execution.
+
+### Balance-weighted draws
+
+`Consensus/Proofs/Accessors/DrawProbability.lean` samples one digest uniformly from the 32-byte values.
+`evalDistEq_uniformSample_vector_map_getElem_injective`, in `Cryptography/Proofs/EvalDistEq.lean`, proves that distinct positions of a uniform vector give a uniform tuple of values.
+`prEvent_drawAccepts_uniform_of_before_pectra` and `prEvent_drawAccepts_uniform_of_pectra` give the exact acceptance probability of the checked draw.
+It is `(e * (2^b - 1) / M + 1) / 2^b`, with integer division inside the numerator.
+Here `e` is the balance, `M` is the largest effective balance of the preset, and `b` is 8 before Electra or 16 from Electra.
+They assume `0 < M`, `e <= M` and `M * (2^b - 1) < 2^64`.
+These theorems do not model SHA-256 or a sequence of draws.
+
+`Consensus/Proofs/Accessors/DrawRandomOracle.lean` exposes the hash call of `proposerDraw` as `queryProposerDraw`.
+Answering it with SHA-256 gives `proposerDraw`.
+With the cached random oracle, a draw whose hashed input is absent from the starting cache accepts with the probability above for a uniform digest.
+These probabilities hold in the random-oracle model only; no theorem bounds the draw when SHA-256 answers.
+The seed is fixed, and other inputs may already be cached.
+For two distinct inputs absent from that cache, `prEvent_queryProposerDraw_pair_of_fresh` gives the product of their acceptance probabilities for uniform digests.
+No theorem yet gives that product for draws that read different bytes of one digest, or for the whole search.
+Seed derivation, including a seed chosen after the oracle answers are seen, is not part of this model.
 
 ### Honest validator duties
 
@@ -1506,6 +2057,7 @@ It assumes a signature that passes the block signature check.
 `getExecutionRequests_eq_ok_iff` shows that the requests read from a list are exactly the requests that give that list.
 It rests on the canonical SSZ decoder and on the empty bytes being the only encoding of an empty list.
 `signedHeader_eq_ok_iff` shows that the signed header of a block carries the root of its body, and `getValidatorsCustodyRequirement_bounds` that the custody requirement stays between its two bounds.
+`totalEffectiveBalance_eq_ok_iff` shows that the balance behind that requirement is the sum of the effective balances of the validators, with a repeated index counted again.
 From Altair, `processSyncCommitteeContributions_spec` states the bits of the sync aggregate of a block.
 They are exactly the bits that its contributions set, each at the seat of its subcommittee.
 It also shows that the contributions name distinct subcommittees below the number of subnets.
@@ -1622,34 +2174,119 @@ So a slashable pair of signed messages needs a collision of the signing root, an
 `isSlashableWith_eq_false_of_signAttestations` shows that each signed vote is not slashable with a vote of the starting file, as a record sees it.
 A record holds the epochs of a vote and maybe its signing root, not its data.
 So that comparison reads a double vote through the signing root, and counts a record without a root as a different vote.
-No theorem says what conditions 2, 4 and 5 guarantee across two imported files, which the EIP leaves to the signer.
+
+A file may also keep only the latest messages of a key, as the [minimal strategy](https://github.com/ethereum/EIPs/blob/46976b2a9bf99f727fb87dc8c809e3a3cdc6b445/EIPS/eip-3076.md#supporting-different-strategies) of the EIP does.
+`lt_slot_of_signBlocks` shows that if each block of the file is after a slot, so is each block signed from it.
+`processProposerSlashing_ne_ok_of_signBlocks` concludes that no valid proposer slashing pairs such an older block with a signed block, since both headers of one have the same slot.
+`isSlashableAttestationData_eq_false_of_signAttestations` shows that no signed vote is slashable with a vote older than each vote of the file.
+An older vote has a source at most, and a target before, those of each vote of the file.
+Each of these theorems needs the file to hold one or more messages of its kind for the key.
+A vote with the target of a kept vote is not older, so the theorem on votes says nothing about it.
+The signer of these theorems records every message it signs, so a signer that prunes as it goes is not covered.
+`mem_blocksOf` and `mem_attestationsOf` show that the messages of a key are those of its own entries.
+The proofs read only conditions 2, 4 and 5, through `lt_slot_of_checkBlockSlot`, `le_sourceEpoch_of_checkSourceEpoch` and `lt_targetEpoch_of_checkTargetEpoch`.
+
+Import follows the [minimal strategy](https://github.com/ethereum/EIPs/blob/46976b2a9bf99f727fb87dc8c809e3a3cdc6b445/EIPS/eip-3076.md#advice-for-minimal-databases) of the EIP, for the held record and for the file.
+For each key it keeps one block limit, the greatest slot, and one vote limit, the greatest source epoch and the greatest target epoch, without signing roots.
+The two epochs of the vote limit can come from different votes.
+So after an import a block must be after the slot limit, and a vote needs a source at least the source limit and a target after the target limit.
+Since no limit carries a signing root, no imported message can be signed again.
+`lt_slot_of_importFile`, `le_sourceEpoch_of_importFile` and `lt_targetEpoch_of_importFile` show that a message accepted after one import is after every message of both inputs, in that sense.
+`checkBlockSigning_of_foldl_importFile` concludes that a block accepted after any finite sequence of imports meets conditions 1 and 2 of every input file.
+`checkAttestationSigning_of_foldl_importFile` does so for a vote and conditions 3, 4 and 5.
+Both include the initial held file, allow repeated imports and duplicate-key entries, and assume only that the final check passes.
+These two theorems cover a record built by imports alone.
+The theorems on one import take any held record, but no theorem chains imports with messages recorded between them.
+
 `readUInt64_uint64Json` and `readBytes_bytesJson` show that each integer and each byte string of a file reads back as written.
 `ofJson_toJson` shows that a whole file reads back as itself from the document that `toJson` writes, whatever its records.
 No theorem says what `ofJson` does on a document that another client wrote.
 
 The Python suite checks each condition and each malformed field against cases worked out from the EIP.
-With release archives enabled, it runs the 38 interchange tests of `eth-clients/slashing-protection-interchange-tests` as a signer that keeps every message.
+With release archives enabled, it runs the 38 interchange tests of `eth-clients/slashing-protection-interchange-tests` against their flags for the minimal strategy.
+Its signer imports each file with the minimal strategy and records each message it signs with its signing root.
 
 ### Optimistic sync
 
-`Consensus/ForkChoice/OptimisticSync.lean` holds the optimistic sync of Bellatrix: the blocks that a node imports before the execution layer judges their payload.
+`Consensus/ForkChoice/OptimisticSync.lean` holds the optimistic sync from Bellatrix: the blocks that a node imports before the execution layer judges their payload.
 An optimistic store keeps their roots beside the blocks of the node, and the rules read only that store.
-The theorems are in `Consensus/Proofs/ForkChoice/OptimisticSync.lean`, and each assumes only that its function succeeds.
+The theorems are in `Consensus/Proofs/ForkChoice/OptimisticSync.lean`, and most assume only that their function succeeds.
 
 `isOptimisticCandidateBlock_eq_ok_iff` states when a block may be imported optimistically: its known parent carries a payload, or its slot is far enough before the clock.
-`latestVerifiedAncestor_spec` shows that the latest verified ancestor of a block is reached through optimistic blocks only.
+`latestVerifiedAncestor_spec` shows that, before Gloas, the latest verified ancestor of a block is reached through optimistic blocks only.
 The same theorem shows that this ancestor is not optimistic, or has the zero parent root.
-`onValidPayload_spec` shows that a valid payload removes exactly the block and its known ancestors from the optimistic set.
-`onInvalidatedPayload_spec` shows that the first invalid block removes exactly the optimistic roots whose chain holds it.
+`onValidPayload_spec` shows that a valid payload removes exactly the roots of its payload chain from the optimistic set.
+`onInvalidatedPayload_spec` shows that the first invalid block removes exactly the optimistic roots whose payload chain holds it.
+`payloadChain_of_lt_glamsterdam` shows that before Gloas the payload chain of a block is its whole chain, so these are its known ancestors and descendants.
 `isOptimisticRestrictedDomain_iff` lists the seven domain types under which an optimistic validator may not sign.
 
 The rule of the latest valid hash in `Consensus/ForkChoice/Optimistic.lean` names the first invalid block.
 The theorems here take that block as given.
 No theorem relates the optimistic set to the blocks that the store of the fork choice removes.
-The second case of an optimistic node, a block tree without a viable branch, is not defined.
-Neither is the re-run of the merge block checks, nor the answer to an execution layer that fails to respond.
-From Gloas these rules are not specified.
+A node is optimistic when its head is optimistic, or when invalid payloads left its block tree with no viable branch.
+`isOptimisticNode_of_isHeadOptimistic` shows that, at every fork, the first case alone makes an optimistic node.
+`isOptimisticNode_of_not_isHeadOptimistic` shows that, before Gloas, the second case needs a block that the fork choice dropped at or above the justified block.
+So a tree that empties with nothing invalidated does not count.
+This assumes that the optimistic store holds only blocks that the fork choice accepted.
+The rule approximates the guide, which asks that every viable branch was invalidated: one invalidated block above the justified block is enough.
+EthLib counts a dropped justified block as no viable branch, a choice of its own.
+`hasNoViableBranch_eq_ok_true_iff` shows that, with the justified block known and the filter successful, no viable branch means that no leaf above it passes the viability filter.
+`filterNodeTree_eq_nil_iff` gives the same fact for the filtered tree of any node.
+The re-run of the merge block checks is not defined, nor the answer to an execution layer that fails to respond.
+
+From Gloas a block carries a bid, and its payload arrives later in an envelope.
+The optimistic sync guide has no Gloas text, and its tests stop before Gloas.
+EthLib therefore reads the Bellatrix guide at Gloas, a choice of its own.
+A root of the optimistic set then names a block whose payload was imported optimistically, as the Gloas gossip rules key a payload status by block root.
+A block carries a payload when its bid names a nonzero block hash; `isExecutionBlock_of_glamsterdam` states it.
+`payloadChain_of_glamsterdam` shows that the payload chain is the chain of the block, filtered by the block hashes that the bids name.
+`payloadChain_links` shows that each root of a payload chain builds on the payload of the next one, as the fork choice sees a full parent.
+`parentRoot_mem_payloadChain_iff` shows that the parent of a block is on its payload chain exactly when the fork choice sees the parent as full.
+`payloadChain_suffix` and `mem_payloadChain_trans` show that the payload chain of a block holds the payload chain of each of its roots.
+`payloadChain_of_find?_some` shows that the payload chain of a block goes on at the first ancestor whose bid names the parent block hash of its bid, with the chain and the payload chain of that ancestor found.
+`payloadChain_of_find?_none` shows that it is the block alone when no ancestor is named.
+So it reaches every payload that the block builds on among the known blocks of its chain, through any number of blocks, full or empty.
+A payload that builds on an invalid payload in that way leaves the set.
+A block built on its parent without the payload of the parent does not hold that payload on its payload chain.
+So its own optimistic payload stays when only the payload of the parent is invalid.
+From Gloas the head of the fork choice is a block with or without its payload, so the optimistic store keeps the status of the head.
+A full head reads the payload of its block, an empty head the payload its block builds on, and a pending head both; `isHeadOptimistic_of_full`, `isHeadOptimistic_of_empty_of_named` and `isHeadOptimistic_of_pending_of_optimistic` and `isHeadOptimistic_of_pending_of_not_optimistic` state it.
+The search of the head never stops at a pending node, so reading both for a pending head is a choice of EthLib, the cautious one.
+`isHeadOptimistic_of_empty_of_unnamed` shows that an empty head whose bid names no known payload fails with `payloadNotVerified`.
+That is the case of an empty first block of Gloas, whose bid builds on a payload of Fulu, which a store of one fork never holds.
+The rule fails there rather than call that payload verified, so the head rule and the latest verified ancestor agree.
+From Gloas the latest verified ancestor takes a node, and reads only the payloads that the node holds.
+A full node holds every payload of its payload chain, and an empty or pending node holds all but its own.
+`latestVerifiedAncestor_ne_root` shows that a node without its own payload is never its own verified ancestor.
+So a pending node reads as full or empty for the head, and as empty for the ancestor: each reading is the cautious one.
+The status of a node is an assumption: a full node must name a payload that the store holds, and the rules do not check it.
+The optimistic store follows the fields of the guide, which do not record the payloads held; the search of the head returns a full node only for a held payload.
+`latestVerifiedAncestor_of_glamsterdam` shows that the answer is the first of those payloads that is not optimistic, with every one before it optimistic.
+`latestVerifiedAncestor_eq_error_of_optimistic` shows that it fails with `payloadNotVerified` when all of them are optimistic, or when there is none.
+Before Gloas the walk returns an optimistic genesis block; from Gloas it never returns an optimistic payload, a choice of EthLib.
+From Gloas the rule of the latest valid hash is not defined, and the second case of an optimistic node is not yet specified.
+That case needs the removal of an invalid payload from the store of the fork choice, which is not defined from Gloas.
+`isOptimisticNode_of_glamsterdam` shows that the rule then fails when the head is not optimistic.
+`isOptimisticNode_of_isHeadOptimistic_error` shows that it fails as the optimism of the head does.
+The store holds the blocks of one fork, so a payload chain does not cross from Gloas into Fulu.
+From Heze the store also records whether a payload satisfies the inclusion lists of the slot before.
+The Heze guide derives that answer from the status that the execution layer gives a payload.
+The verdict of the execution layer follows from the same status.
+`BlockSources.withPayloadStatus` puts the status into the sources that the handlers read.
+For a payload not yet validated, its execution layer accepts every payload and the payload satisfies its lists.
+For an invalidated one, it rejects every payload and the payload does not satisfy them.
+`Store.isPayloadInclusionListSatisfied_of_notValidated` shows the answer `true` for an envelope that the handler accepts.
+`Store.onExecutionPayloadEnvelope_ne_ok_of_invalidated` shows that an invalidated payload is never kept.
+A status outside the three of the guide counts as invalidated, a choice of EthLib: such a payload is never kept.
+The export rejects such a status before any step runs.
+`Store.recordValidatedInclusionListSatisfaction_satisfied` shows that a payload that turns valid takes the answer that the execution layer gives with its verdict.
+`Store.recordValidatedInclusionListSatisfaction_eq` shows that nothing else in the store changes, and `Store.recordValidatedInclusionListSatisfaction_other` that every other answer stays, those of its ancestors among them.
+The store of the fork choice does not keep the status of a payload, but the optimistic store does.
+`OptimisticStore.onValidatedPayload_ok` shows that the move to valid succeeds only for an optimistic payload, which then leaves the optimistic set as a valid payload does.
 The Python suite checks each rule on Bellatrix blocks built in the test, with roots from the SSZ export.
+At Gloas it checks the execution block, the candidate rule, the two payload answers and the latest verified ancestor.
+It checks the optimistic head of each status on a pinned Gloas fork choice case, and that the second case is refused.
+At Heze it checks the answer on the inclusion lists for each status, and once the payload turns valid, on a pinned Heze case.
 
 ### Light client
 
@@ -1700,9 +2337,25 @@ Like the state theorems, these take the lawful type of the body.
 So `isValidLightClientHeader_execution_eq` takes the binding to the fields, for a body of the fork of the header, at a slot from Capella, and from Deneb for a header from Deneb.
 The execution header of the light client header is then the header of the payload of the body, field by field.
 Otherwise a search over the two branch climbs, or one over the hash inputs of the two header roots, names a SHA-256 collision.
+`isValidLightClientHeader_execution_binding` states this step once, for two payload headers of one fork whose roots are the execution root and the root of the payload header of the body.
 From Deneb, `isValidLightClientHeader_blobGas` applies this to the blob gas used and the excess blob gas, at a slot from Deneb.
 The schedule must start Capella no later than Deneb.
 `isValidLightClientHeader_blobGas_zero` shows that a valid header of an earlier slot has zero for both.
+
+A store of a later fork upgrades a header of an earlier fork before it checks it.
+So the fork of a header can be later than the fork of its block.
+`isValidLightClientHeader_execution_eq_upgrade_capella` takes a valid header from Deneb to Fulu at a slot from Capella and before Deneb, and a Capella body.
+The execution header is then the upgrade of the payload header of the body.
+So it has the fields of that payload header, and zero for both blob gas fields.
+`isValidLightClientHeader_execution_eq_upgrade` takes a valid header from Deneb to Fulu at a slot from Capella and from Deneb, and a body of any fork from Deneb to Fulu.
+The execution header is again the upgrade of the payload header of the body, which keeps every field.
+`isValidLightClientHeader_blobGas_upgrade` applies this to the two blob gas fields, at a slot from Deneb.
+Its schedule must also start Capella no later than Deneb.
+`LightClientHeader.isValidLightClientHeader_upgrade_execution` takes the header and the body of `isValidLightClientHeader_execution_eq`, and the upgrade of the header to a fork before Gloas.
+The upgraded header has the upgrade of the payload header of the body, by `LightClientHeader.upgrade_execution`.
+In each of these theorems, the alternative is a SHA-256 collision that a search names.
+The search is over the two branch climbs, or over the hash inputs of two execution header roots.
+
 From Gloas, `isValidLightClientHeader_parentBlockHash` binds the block hash of a header at a slot from Gloas to the parent block hash of the bid of a Gloas body.
 `isValidLightClientHeader_executionBlockHash` binds it, for an earlier slot from Capella, to the block hash of the payload of a body from Capella to Fulu that is from Deneb exactly when the slot is.
 The headers that the client checks are valid: `initializeLightClientStore_header_valid`, `validateLightClientUpdate_attestedHeader_valid`, and `validateLightClientUpdate_finalizedHeader_valid` after the genesis slot.
@@ -1712,6 +2365,15 @@ The signature theorems assume `SignatureChecks.AggregateSound`, listed in A4.
 Under it, `validateLightClientUpdate_signed` shows that every member whose bit is set signed the signing root.
 `validateLightClientUpdate_signed_outside` adds that a set of keys holding fewer seats of the committee than there are signers leaves a signer outside the set.
 `SignatureChecks.not_aggregateSound_acceptAll` shows that the assumption has content: the checks that accept every signature do not meet it.
+`LightClientForgery.forgeAdvantage_le` bounds how often a forger makes the light client accept an aggregate with one designated honest member's bit set, on a root that member never signed.
+It assumes the random oracle model, a proof of possession for every signer, and at most `q` and `qK` hash calls; the bound is small if co-CDH is hard and the solver built from the forger is efficient, which no theorem bounds.
+It is not a proof of `AggregateSound`, and Ethereum's keys carry deposit signatures, not those proofs.
+The bound protects that member's bit only.
+Covering every honest member of a committee needs a guess among them, losing up to a factor of the number of honest seats; that step is not proved.
+Updates signed by corrupted members alone are still accepted, so the safety of headers also needs an honest supermajority of the committee.
+The reduction loses a factor `q`, the number of all message hash calls, and no theorem bounds its running time.
+A deposit signature cannot simply count as a proof of possession here: it is a signature under the message hash, and Ristenpart and Yilek ([ePrint 2007/264](https://eprint.iacr.org/2007/264)) show that such proofs fail when the honest key signs chosen messages.
+With the signing oracle of this game, the honest key's signature on the deposit message of a rogue key `x g1 - pk` gives that key a valid deposit signature.
 The header slots of the store never move back.
 `applyLightClientUpdate_finalizedSlot_le`, `processLightClientUpdate_finalizedSlot_le` and `processLightClientStoreForceUpdate_finalizedSlot_le` show that the finalized slot never decreases.
 `applyLightClientUpdate_optimisticSlot_le`, `processLightClientUpdate_optimisticSlot_le` and `processLightClientStoreForceUpdate_optimisticSlot_le` show the same for the optimistic slot.
@@ -1724,15 +2386,51 @@ No theorem links an honest signer to the canonical chain; that is a property of 
 ### Casper FFG
 
 Casper FFG finalizes checkpoints, each a block with an epoch, from the votes of validators.
-The model in `Consensus/Proofs/Models/Ffg/` follows Casper FFG §2 and Gasper §4.
-It fixes one validator set and one stake for each validator, for every vote.
+The model in `Consensus/Proofs/Models/Ffg/` follows Casper FFG §2 and Gasper §4 and §8.6.
+Each checkpoint has its own validator set, as each block has in Gasper §8.6, and a link counts the stake of the set of its target.
+A supermajority link weighs its voters with one stake for each validator, as Gasper §8.6 assumes.
+A constant validator set then gives the model of Casper FFG and Gasper §4.
 
-`accountable_safety` (`AccountableSafety.lean`) takes two finalized checkpoints whose blocks conflict.
+A slack link weakens a supermajority link by a second set for its target: the bound adds twice the stake of the target set outside that second set.
+The beacon chain needs that slack, since it weighs the attesters of the previous epoch against the active balance of the current one.
+A slack link also lets each checkpoint have a set of weights, each a stake for every validator, and holds when its bound holds under one of them.
+A refinement from the beacon state puts in that set the effective balances of each state at the last slot of the epoch of the checkpoint or of the next one, when that state records the root of the checkpoint for its epoch.
+So a balance may change from one checkpoint to the next, and two branches that justify one checkpoint from two states both fit, where one stake function could not.
+Nothing excludes other weights from a set, and the zero weights make every ordered link a slack link, so the bounds say something only when every choice of weights in each set stays close to the reference weights.
+`accountable_safety_dynamic_slack`, `accountable_safety_reference_slack` and `accountable_safety_of_change_slack` (`AccountableSafety.lean`) take slack links, with a validator set and a set of weights for each checkpoint.
+They measure every stake under reference weights, and lose the slack of the two links that they find and the change from the reference weights to the weights under which those links hold.
+In that change a gain of weight counts once, like an activation, and a loss twice, like an exit.
+Nothing ties the second sets to the validator sets, so these bounds say something only when the slack is bounded, as the exit churn would bound it; no theorem states that bound yet.
+The churn would not bound the change of weights alone: the inactivity leak, penalties and slashings lower effective balances outside any churn, so a bound over a window also needs a budget for those losses.
+
+`accountable_safety_dynamic` (`AccountableSafety.lean`) is Gasper Theorem 8.3.
+It takes two finalized checkpoints whose blocks conflict.
+Then two justified checkpoints, with epochs between those of the two finalized ones, have the following property.
+Validators of both their sets broke a slashing condition, and their stake is bounded below.
+The bound is two thirds of the stake of one set, less one third of the stake of the other, less the stake that activated into the first set or exited from the second since any reference set.
+Gasper states it with a maximum and divisions by three; the theorem states its two terms, multiplied by three, in natural numbers.
+If one of the two sets has no stake, both bounds hold with no slashable validator.
+The reader does not choose the two checkpoints, so the theorem says something only when every justified checkpoint between the two finalized epochs has a set with positive stake.
+
+`accountable_safety_reference` (`AccountableSafety.lean`) restates the first bound against one fixed reference set `V₀`, such as the set of a trusted checkpoint.
+The stake of `V₀` is at most three times the slashable stake, plus the change of each of the two sets since `V₀`.
+The change of a set counts the stake that joined once and the stake that left twice.
+`accountable_safety_of_change` assumes that the change of every justified set between the two finalized epochs is at most `b`, and bounds the stake of `V₀` by three times the slashable stake plus `2 b`.
+`accountable_safety_of_steps` assumes that every justified checkpoint between the two finalized epochs has a set reached from `V₀` in at most `n` steps.
+Each step changes the set by at most `d` in that measure, so the stake of `V₀` is at most three times the slashable stake plus `2 n d`.
+As above, the reader does not choose the two checkpoints, so the hypothesis covers every justified checkpoint between the two finalized epochs.
+For a step of one epoch, `d` bounds the stake that activates plus twice the stake that exits, the source of a consolidation included.
+The churn queues carry unused churn to later epochs, so such a bound can fail in one epoch while the total over a window holds; `accountable_safety_of_change` takes that total.
+The model does not follow withdrawals; the specification covers them with the withdrawability delay in the weak subjectivity period.
+These theorems take one stake for each validator, so a top-up, a consolidation or a penalty of a validator that stays in the set is outside them; the slack forms above count it as a change of weights.
+No theorem yet derives those steps from the beacon state.
+
+`accountable_safety` (`AccountableSafety.lean`) takes one validator set for every vote, and follows from `accountable_safety_dynamic`.
 Then validators with at least one third of the stake broke a slashing condition.
 With a total stake of zero this holds for every set of votes, so the theorem says something only for positive stake.
 
-`plausible_liveness` (`PlausibleLiveness.lean`) takes honest validators with at least two thirds of the stake.
-The votes so far are finite, the total stake is positive, and no honest validator is slashable.
+`plausible_liveness` (`PlausibleLiveness.lean`) takes honest validators in every validator set, with at least two thirds of its stake.
+The votes so far are finite, the stake of each set is positive, and no honest validator is slashable.
 Each honest vote comes from a justified source.
 
 Then there is a justified checkpoint with the following property.
@@ -1741,7 +2439,90 @@ The block is finalized at an epoch above every justified epoch so far.
 The new votes come from justified sources, and no honest validator becomes slashable.
 
 A vote names the validator that signed it, so both theorems assume that no one forges a vote.
-No theorem links the model to the beacon chain, so neither theorem is yet about what a client runs.
+Below, the votes of the model come from the attestations that the blocks of a chain apply, but neither theorem is yet applied to them, so neither is yet about what a client runs.
+
+These pieces of that link exist.
+`FfgVotes.lean` relates the slashing conditions of the beacon chain to those of the model.
+`justificationTest_iff_stake` (`Consensus/Proofs/Transition/FfgStake.lean`) reads the test of justification as a comparison of stakes.
+There the stake of a validator is its effective balance, and the indices count as a set.
+It needs an active stake of more than one and a half increments.
+Up to that bound, the beacon chain can justify with no vote at all, since a total balance is never below one increment.
+`processAttestationAltair_targetFlag` (`Consensus/Proofs/Transition/TargetFlags.lean`) covers one attestation from Altair.
+A timely target flag that it sets belongs to an attester of an indexed attestation that passed the checks of the step.
+With the BLS checks, the aggregate signature verifies under keys that include the key of that attester.
+Reading this as a signature by that attester assumes that BLS aggregate signatures cannot be forged.
+The source of that attestation is the justified checkpoint of the epoch of the flags.
+Its target is the checkpoint of that epoch, with the block root that the state records for its first slot.
+A vote is a pair of a validator and attestation data.
+An attestation casts a vote for each validator that its bits show in its committees, with its data (`attestationVotes`, `Consensus/Proofs/Transition/TargetVotes.lean`).
+A block casts the votes of its attestations, read in the committees of the state before the block (`blockVotes`).
+`processBlock_attestationSplit` (`ActiveKept.lean`) shows that the block reads those same committees when it processes each attestation.
+The steps before the attestations keep activity up to the current epoch and write only the RANDAO mix of the current epoch, which the seeds of the previous and current epochs do not read.
+That needs more than `MIN_SEED_LOOKAHEAD + 2` epochs of RANDAO mixes.
+`voteFrame_processBlock` then shows that a block sets a target flag only from one of its votes, for the link of the epoch of the flag at the position of the flag.
+The block keeps the slot, the block roots and the justified checkpoints.
+So `TargetFlagsVoted.of_voteFrame` keeps each target flag backed by a vote for its link, from the earlier votes or those of the block.
+`TargetFlagsVoted.of_advanceSlots` (`Consensus/Proofs/Transition/TargetSlots.lean`) carries the same fact across the slots, the epoch step included.
+The slot step writes one block root, so the roots at the first slots of the current and previous epochs stay.
+That needs at least one slot per epoch, and a buffer of roots that covers two epochs, as both presets do.
+The epoch step moves the flags of the current epoch to the previous one, and justification moves the current justified checkpoint to the previous one.
+Justification does not run in the first two epochs, so the theorem assumes the two justified checkpoints equal there, and the slots keep that.
+The genesis state built from deposits has equal justified checkpoints, and the slots, the blocks and every upgrade keep that (`Consensus/Proofs/Transition/TargetUpgrades.lean`).
+`TargetFlagsVoted.of_processUpgrades` carries the target-flag fact across the upgrades from Altair on.
+Before Altair, `PendingVoted` (`Consensus/Proofs/Transition/TargetPending.lean`) says the same of each pending attestation of the two epochs, across attestations, blocks and slots.
+It relies on the beacon committees of those epochs staying fixed while the epoch is recent (`Committees.lean`), which needs more than `MIN_SEED_LOOKAHEAD + 2` epochs of RANDAO mixes.
+`TargetFlagsVoted.of_upgradeToAltair` (`TargetUpgrades.lean`) builds the target flags of the first Altair state from such pending attestations.
+A vote of a block is evidence that its validator signed the data only with the BLS checks, and under the assumption that BLS aggregates with proofs of possession cannot be forged, since the block accepts the attestation only when the signature checks accept its aggregate signature.
+
+`processJustificationAndFinalization_linkWithChurn` (`Consensus/Proofs/Transition/FfgJustification.lean`) refines one epoch step.
+It takes the target-flag fact from Altair, the pending-attestation fact before Altair, and an active stake of more than one and a half increments.
+The two facts are needed at the state after the slot step where justification runs; `advanceSlot_slackJustifiedCheckpoints` (`FfgSlack.lean`) reaches it from the state before the slot.
+The validator set of a target is the active set of its epoch, as each checkpoint has its own set in Gasper §8.6.
+Each validator weighs its effective balance in the state before the step.
+The votes of the model must hold those of a set of votes from which the target flags and the pending attestations come.
+The step keeps the current justified checkpoint, or replaces it by the checkpoint of the previous or the current epoch, whose test passes; the link goes from the justified checkpoint of that epoch to the new checkpoint.
+Then twice the stake of the set of the target is at most three times the stake of the voters of the link, plus a term of churn.
+The term is twice the stake of that set outside the active set of the current epoch, because the step divides by the active balance of the current epoch.
+`linkWithChurn_of_test` gives the same bound for one epoch whose test passes, when each counted attester is active in that epoch and cast a vote of the set for its link.
+`TargetFlagsVoted.attester` from Altair and `PendingVoted.attester` before it give that fact.
+With them, `linkWithChurn_of_test` would give the bound for the previous epoch when both pass, whose bit the finalization rules read; no theorem states that yet.
+For the current epoch the term is zero.
+For the previous epoch, `exists_exitEpoch_eq_of_mem_sdiff_active` shows that it counts only validators that exit at the current epoch, when the registry stays within the limit of the preset.
+The theorem reads the unchecked active indices, and the bound makes each index equal to its registry position.
+The exit churn bounds that stake, but no theorem states that bound yet.
+So one step gives the stake condition of a supermajority link of the model, up to that term.
+The beacon chain leaves slashed attesters out, and the model counts them, so the converse does not hold.
+The ancestry of the blocks of the link is not shown yet.
+
+`processJustificationAndFinalization_slackJustifiedCheckpoints` (`Consensus/Proofs/Transition/FfgSlack.lean`) turns one step into a slack link of the model.
+If the two justified checkpoints of the state before the step are slack-justified, so are those of the state after it.
+A new current justified checkpoint must match the state of that step.
+Its set is the active set of its epoch, its set of weights holds the effective balances, and each member of both of its sets is active in the current epoch.
+In that single step, only the step that changes the current justified checkpoint reads them, so the effective balances may change before a later step.
+Two branches can justify the same checkpoint in different states; its set of weights holds the balances of both, but its validator set must be the active set of its epoch in both states, and no theorem shows that yet.
+That single step asks a match only for the new current justified checkpoint; the hypotheses of a chain step ask it for both recent epochs at each end of an epoch, since finalization also reads a previous target that the same step justifies.
+The step also needs the previous justified epoch below the previous epoch once justification runs, and the source block of each recent link in the chain of its target block.
+`slackJustifiedCheckpoints_of_chain` (`Consensus/Proofs/Transition/FfgSlackChain.lean`) carries these steps along a chain from the genesis state built from deposits, for a set of votes that holds the votes of each block step.
+`slackJustifiedCheckpoints_activeSetAt_of_chainSteps` (`FfgSlackActive.lean`) takes the votes that the block steps of the run cast, the active sets and the effective balances.
+Its step asks only the active stake, the order of the blocks and the preset.
+The order of the blocks asks that the map from roots to blocks keeps in order the roots that a state records at two consecutive slots, and the zero root before the root of slot zero (`rootLinks`, `Consensus/Proofs/Transition/FfgRoots.lean`).
+Two consecutive slots record the same root, or a block and its child, since the header check makes the parent root of a block the root recorded at the slot before it; no theorem states that yet.
+Without a collision of header roots, such pairs order the roots by ancestry.
+`RootsAbove.of_chainStep` then keeps each justified checkpoint below every root that the state records from its epoch on, which gives the source block of each recent link in the chain of its target block.
+`slackJustifiedCheckpoints_chainRoot_of_chainSteps` (`FfgSlackActive.lean`) takes the roots themselves as the blocks of the model, ordered by the links of every state that genesis reaches (`ChainRoot`), so the order holds by construction and the step asks only the active stake.
+That order does not depend on the last state, so two branches from one genesis share it.
+It holds the links of every reachable state, so it also holds every collision of header roots among reachable headers, and such collisions exist by counting.
+A collision of header roots makes two conflicting blocks comparable, so this order does not serve a safety theorem for two chains; that needs the order of the states of the given runs, with a named search for a collision.
+`processJustificationAndFinalization_slackBits` and `advanceSlot_slackBits` (`Consensus/Proofs/Transition/FfgFinality.lean`) keep the finalized checkpoint slack-finalized through one step, by the four rules of finalization read as 1- or 2-finalization (Gasper Definition 4.9).
+They carry two facts in the bits of justification: a set bit 0 gives a slack link from the previous to the current justified checkpoint, and a set bit 1 makes the checkpoint two epochs back slack-justified.
+They need a buffer of roots of three epochs, which both presets have.
+`slackFinalized_of_chainSteps`, `slackFinalized_activeSetAt_of_chainSteps` and `slackFinalized_chainRoot_of_chainSteps` (`FfgFinalityChain.lean`) carry this along a chain from the genesis state built from deposits, with the sets, weights and votes of the theorems on justified checkpoints.
+The weights of a checkpoint then hold the effective balances of each state before a slot that ends its epoch or the next one, on a run between genesis and the last state, when that state records the root of the checkpoint for that epoch.
+That genesis state exists only before Altair, so a chain whose genesis is later is out of scope.
+
+Adding votes and allowed weights keeps slack links, justification and finalization (`Consensus/Proofs/Models/Ffg/Monotonicity.lean`).
+`FfgFinalityMonotonicity.lean` puts the finalized checkpoint of a chain in such larger sets, with the same validator sets and second sets.
+This does not identify validator indices or establish root ancestry across two chains.
 
 ### Engine API
 
@@ -1777,6 +2558,12 @@ The theorems about `engine_forkchoiceUpdated` are in `Proofs/ForkchoiceUpdated.l
 The exception is step 2 of the method, which `forkchoiceUpdated_of_belowFinalized` covers.
 A valid head below the finalized block that the execution layer knows is `VALID` there, and the head does not change.
 `forkchoiceUpdated_of_invalid` gives the answer for an invalid head, and `latestValid_eq_some_iff` with `getElem?_succ_chainOf` shows that its latest valid hash is the valid ancestor nearest the head.
+In version 4, custody columns that decode never change the answer (`forkchoiceUpdatedCall_custody`), and without payload attributes every version gives the same answer (`forkchoiceUpdatedCall_of_null`).
+The model has no timestamps, so it checks neither the fork of the payload attributes nor that their timestamp is above the head's.
+For the same reason, version 2 takes both structures of the attributes at any time.
+When the update applies a valid head, attributes whose fields fit no structure of the version give `-38003` (`forkchoiceUpdatedCall_eq_error_of_attributes`, with `payloadAttributesOfVersion_eq_error_iff` and `payloadAttributesOfJson_wrong_fields`), and when it applies none they are not read (`forkchoiceUpdatedCall_of_no_head`).
+Version 1 names no code for a wrong structure, and the model gives it `-38003`, the answer of its step 9 for invalid attributes.
+The OpenRPC description of the method makes the payload attributes optional, but the model asks for them, as `null` when there are none.
 
 `executionEngine_accepts_iff` (`Proofs/ExecutionEngine.lean`) states when the execution engine accepts a payload request of the beacon chain.
 The request lists must be well formed, and the payload must have a block at the active fork of the chain, which must be before Glamsterdam.
@@ -1821,6 +2608,35 @@ BLS key generation fails after 16 attempts, a bound that EthLib chose.
 The ERC-2333 master and child derivations reuse key generation, so they share the bound.
 An attempt fails only when its 48-byte output is a multiple of `r`.
 
+A run of slots of the consensus state transition divides by constants of the preset and of the configuration, such as the slots of an epoch, the increment of an effective balance and the quotient of the churn limit.
+Python's integer division and remainder raise an error on a zero divisor, so the specification fails there.
+In Lean a division of 64-bit integers by zero returns zero and a remainder returns the dividend, so with such constants a step can succeed in EthLib where the specification fails.
+`Preset.DivisorsPositive` and `Config.DivisorsPositive` (`Proofs/Transition/Totality/Bound.lean`) name the presets and configurations whose divisors in a run of slots are positive, and the mainnet and minimal ones are proved to be such.
+Block processing divides by further constants, such as the quotients of the slashing penalty and of the whistleblower reward, which these predicates do not list.
+A theorem that a step succeeds takes a predicate only where its proof needs a positive divisor.
+For a preset or configuration with a zero divisor, any theorem about a step that divides by it describes EthLib's transition, not the specification's.
+
+The accessor that lists the active validators keeps a result where the specification fails.
+The specification lists the active validators of an epoch by their indices, and builds each index as a `ValidatorIndex`, a 64-bit integer.
+That construction rejects a value of `2^64` or more, so the specification fails when a validator at a registry position of `2^64` or more is active.
+`getActiveValidatorIndices` returns a plain list and never fails; at such a position it would take the position modulo `2^64`.
+Before Gloas the type of the registry bounds it by the limit of the preset, a 64-bit integer (`2^40` in the mainnet and minimal presets), so no position reaches `2^64`.
+From Gloas the type of the registry has no length limit ([EIP-7688](https://eips.ethereum.org/EIPS/eip-7688#converted-types)).
+A new validator still gets the size of the registry as its index, and that index must be below `2^64` (`getIndexForNewValidator_ok_iff`).
+So a transition never adds a validator at a position of `2^64` or more, and only a starting state built outside the transition can hold one.
+
+`getActiveValidatorIndicesChecked_eq_ok_iff` in `Consensus/Proofs/Accessors.lean` states the divergence exactly.
+The checked read converts each active position as the specification does, and it gives EthLib's list exactly when every active position is below `2^64`.
+The specification also converts the number of active validators to a 64-bit integer, and rejects a count of `2^64`, which a registry of `2^64` positions allows.
+Such a registry can arise through the transition from Gloas, at least in principle.
+
+The transition reads the active validators through `getActiveValidatorIndicesChecked`, which fails at an active position of `2^64` or more, as the specification does.
+The shuffle of the beacon committees and the committee count of an attestation also fail at `2^64` active validators, so the transition agrees with the specification on the count of committees.
+The churn limit of validators before Electra and the Phase 0 weak subjectivity period still convert the count of the pure list without a check.
+Both run only before Electra, where the type of the registry keeps it within the limit of the preset (`BeaconState.registryWithinLimit_of_lt`).
+There the count is below `2^64` (`length_getActiveValidatorIndices_lt`), so the conversion keeps its value (`toNat_length_getActiveValidatorIndices`) and agrees with the specification.
+The genesis validity check, fork choice, gossip and the honest-validator duties call the pure list directly, and keep the difference.
+
 Some official vectors expect more than a source says.
 The transaction tests of ethereum/tests reject 43 results whose gas limit is `2^64`, or whose gas limit times gas price exceeds `2^256 - 1`.
 No rule of the Yellow Paper rejects such a transaction alone, and EIP-7825 caps the gas limit only from Fusaka on.
@@ -1834,6 +2650,70 @@ Only the lemmas in `Proofs/Bls/PairingLaws.lean` and `Proofs/AltBn128/PairingLaw
 The BLS signature, consensus, KZG, PeerDAS, EIP-2537 and EIP-197 theorems need no such hypothesis.
 `PairingLaws` is a `Prop`, never an axiom, so `lake exe check-decls` still sees only the standard axioms.
 `pairingLaws` proves the law for BLS12-381, and `AltBn128.pairingLaws` proves it for alt_bn128.
+
+The theorems in `Proofs/Transition/Totality/` show that the steps of a run of slots succeed, and each takes hypotheses that the specification does not state.
+Each hypothesis narrows the states, presets or runs that the result covers.
+Justification and finalization need two slots an epoch and a buffer of block roots that reaches the epoch before (`Preset.RootsReachPreviousEpoch`).
+With one slot an epoch the specification itself can fail there.
+Before Altair they also assume that the committees of the pending attestations can be computed (`PendingResolved`), which a block checked when it included them.
+From Altair the rewards and penalties need `RewardsFit`, a set of bounds on the preset, the configuration, a budget of Gwei and a bound on the inactivity scores that the step reads.
+They also need each effective balance at most the largest cap, the finalized epoch at most the previous epoch, and each balance and the sum of the effective balances within the budget.
+The inactivity penalty multiplies an effective balance by an inactivity score, and a score grows by at most the score bias in each epoch.
+So the bound on the scores limits the length of the run that the theorems cover.
+On mainnet the bounds hold for a budget of `2^57` Gwei, about `1.44 * 10^8` ETH, and scores up to `2^23`.
+From a score of zero, a score reaches `2^23` only after `2^21` epochs of missed targets, about 25 years at 32 slots of 12 seconds an epoch.
+The specification itself overflows there: at 2048 ETH the product fails once a score passes about `9.0 * 10^6`.
+The bound on the reward of a flag does not use the square root of the total active balance.
+The validators that set a flag in the previous epoch include those whose exit epoch is the current epoch.
+So their effective balance can exceed the total active balance of the current epoch, and only the budget bounds it.
+The budget of `2^57` Gwei is about 84% of the largest that this bound allows.
+Before Altair the rewards and penalties need `RewardsFitBeforeAltair`, a set of bounds on the preset, a budget of Gwei and a bound on the current epoch.
+They read the root of the block at the slot of each vote that matches the target.
+So they assume that each recent pending attestation is as inclusion in a block stored it (`PendingWellFormed`).
+Its slot is then in the epoch of its list, its inclusion delay is not zero, and its proposer is a validator of the registry.
+No theorem yet shows that this holds along a run: the preservation must be stated over the slot advance and block processing, and the nonzero delay needs a least inclusion delay of one slot, as mainnet and minimal have.
+The inactivity penalty before Altair multiplies an effective balance by the delay of finality, which is at most the current epoch.
+So the bound on the current epoch limits the length of the run that the theorem covers.
+A proposer can earn a share of the base reward of each signer that it included.
+So the bound on its reward is the bound on base rewards at the whole budget, as the effective balances of its signers sum to at most that.
+On mainnet and minimal these bounds hold for a budget of `2^57` Gwei and `2^21` epochs.
+The bound on the current epoch multiplies it by the largest cap at any fork, 2048 ETH, so it is conservative before Altair, where the cap is 32 ETH.
+
+Before Electra, registry updates need a ceiling for the first activation epoch and every exit epoch other than `FAR_FUTURE_EPOCH`.
+The ceiling plus the registry size and the withdrawability delay must be below `2^64`.
+Each ejection raises the ceiling by at most one, and activation leaves the exit epochs unchanged.
+
+From Electra, pending consolidations succeed when their source and target indices are in the registry, balances match the registry, and the sum of balances is below `2^64`.
+The current epoch plus one must fit in 64 bits.
+The source is debited before the target is credited, so the budget also covers equal source and target indices.
+
+From Gloas, builder payment settlement succeeds when an epoch has at least six slots.
+The registry must also be within its limit, and the sum of effective balances below `2^64`.
+Mainnet and minimal have 32 and 8 slots an epoch.
+With fewer than six, the specification itself can overflow when it multiplies the balance of one slot by six.
+The step changes only the pending payments and the withdrawals of the builders, so it keeps the bounds on the amounts of a run of slots (`WithinBudget`).
+
+The builder payments of Gloas carry four hypotheses and one restriction.
+`chainSteps_paysQuorum` proves that along a chain through the last slot of an epoch, each payment of the previous epoch that reaches its quorum is paid exactly once.
+Paid means that the withdrawal of the payment joins the queue of the withdrawals of the builders.
+The last slot of the epoch queues the withdrawals of exactly those payments.
+A run of slots and blocks over the whole chain (`PaymentChain`) releases each of them, and releases no payment twice.
+The withdrawals of such a run are fixed by the states that each step computes.
+Its payments are fixed too, up to their order: a slot lists only payments that reach the quorum, and a block only the payment of its parent.
+`paymentChain_of_chainSteps` proves that every chain inside one fork is such a run, and `PaymentChain.nodup` gives "at most once" for any such run.
+The facts on the payments must hold at the first state, as `paymentFacts_upgradeToGloas` proves for the upgrade to Gloas.
+These theorems also take a positive payment quorum (`PaymentQuorumPositive`), at least two slots in an epoch, and at most 2^40 entries in each registry at the last state.
+`paymentQuorumPositive_presets` and `twoSlotsPerEpoch_presets` prove the first two for the mainnet and minimal presets.
+For the validators, 2^40 is `VALIDATOR_REGISTRY_LIMIT`.
+The registry of the builders has no limit in the specification, so for it the bound is an assumption, which matches `BUILDER_INDEX_FLAG`.
+No theorem proves either bound along a chain.
+The chain must stay inside one fork, from Gloas on, so a chain across the upgrade to Heze is not covered.
+A run of payment steps relates two states of one fork, and carrying open payments through that upgrade needs a run across forks.
+The four facts that the runs assume do hold through that upgrade, by `PaymentFacts.upgradeToHeze`.
+The "at least once" half is stated for a chain split at the epoch step, which fixes the step that pays.
+The quorum is read on the state that the epoch transition reaches before its step of the payments.
+A bid whose payment a slashing cancels may still be paid by the late path of the bid, and then the run releases it once.
+
 Whatever those hypotheses leave unproved is part of what a reader trusts.
 
 ### A3. Side channels
@@ -1861,7 +2741,7 @@ The Python bindings expose the block cipher, CTR and GCM, as `encrypt_block`, `d
 ### A4. Idealisations
 
 A security theorem rests on a model, such as a random oracle for a hash.
-Each such theorem of EthLib rests on one idealisation, listed below.
+Each such theorem of EthLib rests on the idealisations listed below, and on any hypothesis that its statement names.
 The two theorems of Casper FFG share one bullet, as do the signature theorems of the light client.
 The binding of a proof of possession shares the bullet of leanXMSS, and the codeword searches of each scheme share the bullet of that scheme:
 
@@ -1892,12 +2772,29 @@ The binding of a proof of possession shares the bullet of leanXMSS, and the code
 - VRF unpredictability: Keccak-256 is a random oracle on byte strings, as for leanXMSS.
   The bound says nothing about an attack that uses the structure of Keccak.
   It counts classical queries only, so it says nothing about a quantum adversary.
-- BLS: the hash to G2 under the message tag is a random oracle onto the multiples of `g2`.
+- VRF mixed selection: Keccak-256 on the 74-byte inputs that start with `PQ_VRF_MIX` is a uniformly random function of the output and the randomness, independent of the tree hash.
+  That is the random-oracle assumption for the domain of the mix, and the tree hash stays Keccak-256 itself.
+  The holder can still compute Keccak-256 on mix inputs, and the model ignores those values.
+  No other input of the VRF has 74 bytes, so the mix shares no input with the tree; that is necessary for the assumption, not a proof of it.
+  The randomness is uniform, drawn after the holder registers its tree, and independent of the holder.
+  The bound counts classical mix queries only, and says nothing about an attack that uses the structure of Keccak.
+- BLS: the hash to G2 under the message tag is a random oracle onto the multiples of `g2`, and the hash under the key tag of the proof-of-possession scheme is an independent random oracle onto the same group.
+  The two tags differ, as §3.3.1 of the BLS draft requires.
   [RFC 9380](https://www.rfc-editor.org/rfc/rfc9380), §3, calls its `hash_to_curve` suitable where a random oracle onto the group is needed, and §8.8.2 gives the suite that encoding.
   Nothing in EthLib proves that the hash behaves as such an oracle.
 - Light client: an aggregate signature check accepts a message only if every key in its set signed it (`SignatureChecks.AggregateSound`).
-  BLS signatures with proofs of possession are meant to give this, except with negligible probability, and EthLib proves no such bound.
-  The theorems say nothing about a forged aggregate signature.
+  BLS signatures with proofs of possession are meant to give this, except with small probability, and EthLib proves only the bound below.
+  `Pop.byteForgeAdvantage_le_coCdhAdvantage` bounds the forger of such aggregates on EthLib's bytes, with both hashes as random oracles.
+  That is the draft's scheme, whose proofs of possession hash the key under the key tag.
+  Ethereum registers keys with deposit signatures under the message tag instead, which that game does not model.
+  `LightClientForgery.forgeAdvantage_le` bounds the probability that the light client accepts a forged signature of one designated honest member, when every signer carries a proof of possession that passes PopVerify, §3.3.3.
+  The theorems on one accepted update say nothing about a forged aggregate signature; the bound gives its probability.
+- ECDSA: the bijection in the middle of the conversion `x_R mod n` is a uniform permutation, which the adversary evaluates in both directions.
+  In ECDSA that bijection is the identity on integers below `2^256`, so the model idealises the conversion, as §4 of [Fersch, Kiltz and Poettering](https://doi.org/10.1145/2976749.2978413) does.
+  The model draws the deterministic nonces of RFC 6979 as a random function of the message, so each message has one signature.
+  [RFC 6979 §3.2](https://www.rfc-editor.org/rfc/rfc6979#section-3.2) computes them with HMAC_DRBG, whose seed holds the private key; the model assumes that output is pseudorandom, and no theorem proves it.
+  The hash of messages is a fixed public function, so a bound on this game must charge its collisions to a named reduction.
+  `Proofs/Secp256k1/Security/Game.lean` states that game; `forgeAdvantage_le` (`Proofs/Secp256k1/Security/ChosenMessageBound.lean`) bounds its advantage by named reductions.
 - Casper FFG: a vote names its signer, so no one can forge a vote.
   The theorems of accountable safety and plausible liveness say nothing about an attack on the signatures.
 - KZG batch checks: the challenge hash `Fr.hashToBlsField` is a random oracle from the inputs of the batch onto `Fr`.
@@ -1909,6 +2806,9 @@ The binding of a proof of possession shares the bullet of leanXMSS, and the code
   In `prEvent_blobInput_root_le`, the evaluation challenges `computeChallenge` are a fixed function of the blobs and commitments, not part of the oracle.
   Their hash input starts with a different 16-byte domain tag from that of the batch challenge, so the two hashes never read the same bytes.
   So the bound `(q + 1) (n - 1) / r` covers grinding, where the adversary hashes many batches and keeps one whose challenge is a root.
+  `blobBindingAdvantage_le` instead models both individual and batch challenges with one shared cache and uniform answers in `Fr`.
+  Its typed keys erase polynomial annotations and stand for the two domain-separated byte encodings; no theorem proves those encodings jointly injective.
+  That theorem also assumes correct representations from the adversary, a reading of the algebraic group model.
   The theorems say nothing about an attack that uses the structure of SHA-256.
 
 ## Gap B: does the code that runs match the definitions?
@@ -1963,12 +2863,12 @@ A proof is unaffected unless it uses one of the tactics of C2.
 Between the Lean exports and Python sits a layer of hand-written C.
 
 <!-- generated: exports -->
-Lean exports 309 operations and 44 size constants.
-The Python extension calls 309 of the operations and 44 of the constants.
+Lean exports 380 operations and 49 size constants.
+The Python extension calls 380 of the operations and 49 of the constants.
 <!-- end generated -->
 
 <!-- generated: c-lines -->
-8919 lines of hand-written C sit between them and Python: `aes.c` (119), `blocks.c` (351), `bls.c` (426), `chain.c` (45), `consensus.c` (1652), `crc32.c` (34), `crc32c.c` (34), `devp2p.c` (59), `discv4.c` (78), `discv5.c` (303), `engine.c` (45), `enr.c` (177), `eth.c` (225), `ethash.c` (65), `evm.c` (109), `fees.c` (56), `forkid.c` (101), `gossip.c` (54), `hmac.c` (102), `keccak.c` (85), `kzg.c` (511), `module.c` (1270), `password_kdf.c` (105), `pow.c` (73), `precompile.c` (85), `pyvalue.c` (421), `reqresp.c` (130), `rlp.c` (156), `rlpx.c` (184), `secp256k1.c` (169), `secp256r1.c` (42), `sha256.c` (38), `snap.c` (114), `snappy.c` (146), `sphincs.c` (85), `ssz.c` (47), `state.c` (108), `transactions.c` (181), `trie.c` (102), `vrf.c` (119), `wrappers.h` (579), `xmss.c` (134).
+9888 lines of hand-written C sit between them and Python: `aes.c` (119), `blocks.c` (364), `bls.c` (426), `chacha20_poly1305.c` (75), `chain.c` (45), `consensus.c` (1791), `crc32.c` (34), `crc32c.c` (34), `deposit_tree.c` (84), `devp2p.c` (59), `discv4.c` (78), `discv5.c` (303), `engine.c` (113), `enr.c` (177), `era.c` (12), `era1.c` (12), `eth.c` (225), `ethash.c` (65), `evm.c` (109), `fees.c` (56), `forkid.c` (101), `gossip.c` (80), `hmac.c` (102), `keccak.c` (85), `keystore.c` (30), `kzg.c` (511), `libp2p.c` (102), `module.c` (1401), `noise.c` (111), `password_kdf.c` (105), `pow.c` (73), `precompile.c` (85), `pyvalue.c` (421), `reqresp.c` (130), `rlp.c` (156), `rlpx.c` (184), `secp256k1.c` (169), `secp256r1.c` (42), `sha256.c` (38), `snap.c` (140), `snappy.c` (146), `sphincs.c` (85), `ssz.c` (47), `state.c` (108), `transactions.c` (181), `trie.c` (115), `vrf.c` (141), `wrappers.h` (663), `x25519.c` (21), `xmss.c` (134).
 <!-- end generated -->
 
 That C converts arguments, owns and frees Lean objects, and turns errors into Python exceptions.
@@ -2097,6 +2997,7 @@ So a hostile parameter can also make a call run for an impractical time.
 A keystore file gives `N`, `r` and `p`, or `c`, and the key length `dklen`.
 So a caller that reads one must bound `r * N`, `r * p`, `c` and `dklen` before it calls the derivation.
 The Lean docstrings of `pbkdf2`, `scrypt` and `romix` say so.
+Keystore decryption does this itself with a model of the cost, against limits that its caller chooses.
 
 ### D2. Dependencies
 
@@ -2108,6 +3009,47 @@ The package requires Mathlib, at `v4.35.0`, commit `56a0058`.
 The package requires VCVio, at `bbf05ee`.
 Only the proofs import them.
 The Lean toolchain is `leanprover/lean4:v4.35.0`.
+<!-- end generated -->
+
+VCVio defines the oracle computations and probabilities in which the security games are stated.
+The proofs below import it, directly or through another file.
+A directory is listed when at least one file under it imports VCVio, or when the file of the same name beside it does, such as `Wots.lean` beside `Wots/`.
+So a listed directory can hold files that do not import VCVio.
+The files named `Proofs.lean` are roots that gather the proofs of a domain, so they are not listed.
+
+<!-- generated: vcvio-users -->
+- `EthLib/Consensus/Proofs/Accessors/`
+- `EthLib/Consensus/Proofs/DataAvailability/`
+- `EthLib/Consensus/Proofs/Gossip/`
+- `EthLib/Consensus/Proofs/LightClient/`
+- `EthLib/Consensus/Proofs/PqKeys/`
+- `EthLib/Cryptography/Proofs/Aes/`
+- `EthLib/Cryptography/Proofs/BadOnBudget.lean`
+- `EthLib/Cryptography/Proofs/BadOnGrowth.lean`
+- `EthLib/Cryptography/Proofs/Bls/`
+- `EthLib/Cryptography/Proofs/DerivationTable.lean`
+- `EthLib/Cryptography/Proofs/EvalDistEq.lean`
+- `EthLib/Cryptography/Proofs/ExceptTAnswers.lean`
+- `EthLib/Cryptography/Proofs/HashSig/`
+- `EthLib/Cryptography/Proofs/IndependentAnswers.lean`
+- `EthLib/Cryptography/Proofs/IndependentOutside.lean`
+- `EthLib/Cryptography/Proofs/Kzg/`
+- `EthLib/Cryptography/Proofs/LazyPermutation.lean`
+- `EthLib/Cryptography/Proofs/LogKeys.lean`
+- `EthLib/Cryptography/Proofs/LoggedUntilBad.lean`
+- `EthLib/Cryptography/Proofs/Merkle/`
+- `EthLib/Cryptography/Proofs/ProgrammedPermutation.lean`
+- `EthLib/Cryptography/Proofs/QueryAvoidance.lean`
+- `EthLib/Cryptography/Proofs/Secp256k1/`
+- `EthLib/Cryptography/Proofs/Sphincs/`
+- `EthLib/Cryptography/Proofs/TaggedLazyPermutation.lean`
+- `EthLib/Cryptography/Proofs/Vrf/`
+- `EthLib/Cryptography/Proofs/Wots/`
+- `EthLib/Cryptography/Proofs/Xmss/`
+- `EthLib/Execution/Proofs/Trie/`
+- `EthLib/Serialization/Proofs/Ssz/`
+
+No specification file imports it.
 <!-- end generated -->
 
 ### D3. The KZG trusted setup

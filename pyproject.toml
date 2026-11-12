@@ -7,7 +7,8 @@ name = "ethlib"
 version = "0.3.0"
 description = "Formally verified Ethereum primitives, written in Lean"
 readme = { file = "README.md", content-type = "text/markdown" }
-license = "CC0-1.0 AND MIT AND Apache-2.0"
+license = "CC0-1.0 AND MIT AND Apache-2.0 AND Unicode-3.0"
+license-files = ["LICENSE", "EthLib/Base/Unicode/LICENSE"]
 requires-python = ">=3.10"
 authors = [{ name = "ethereum" }]
 urls = { homepage = "https://github.com/ethereum/ethlib" }
@@ -26,8 +27,8 @@ test = [
 [dependency-groups]
 lint = [
   "codespell==2.4.3",
-  "ruff==0.17.3",
-  "ty==0.0.95",
+  "ruff==0.17.4",
+  "ty==0.0.99",
 ]
 
 [tool.uv]
@@ -64,11 +65,14 @@ src = ["bindings/python", "bindings/python/tests", "scripts"]
 # The scripts run on Python 3.12. The package supports Python 3.10, and the test of each wheel
 # runs the suites, the vector check and the archive fetcher on the Python of the wheel.
 target-version = "py312"
-# `lake exe gen-bindings` writes the stub, and its check compares it byte for byte.
+# `lake exe gen-bindings` writes the stub and the type aliases.
+# Its check compares them byte for byte.
 # tests/consensus/pq_keys/SHA256SUMS pins the key generator by its digest.
 extend-exclude = [
   "bindings/python/ethlib/cryptography/_native.pyi",
+  "bindings/python/ethlib/networking/noise/_types.py",
   "tests/consensus/pq_keys/generate.py",
+  "tests/consensus/large_amounts/generator/",
 ]
 
 [tool.ruff.per-file-target-version]
@@ -95,8 +99,8 @@ ban-relative-imports = "all"
 [tool.ruff.lint.isort]
 combine-as-imports = true
 known-first-party = ["ethlib"]
-# The benchmarks import python-snappy and ssz-specs, whose names two suites share.
-known-third-party = ["snappy", "ssz"]
+# The key generator imports ssz-specs, whose name a suite shares.
+known-third-party = ["ssz"]
 
 [tool.ruff.lint.per-file-ignores]
 # Each suite imports its own `fixtures` module, which shares its name with the other suites',
@@ -104,9 +108,6 @@ known-third-party = ["snappy", "ssz"]
 "bindings/python/tests/**" = ["D", "TID252"]
 "scripts/test_*.py" = ["D"]
 "tests/**" = ["D"]
-# A benchmark builds each timed input in a lambda default, outside the timing,
-# and names the modules and types of the specifications by one letter.
-"benchmarks/*.py" = ["B008", "N803", "N812", "N814"]
 # The evaluator dispatches on the name of each `ast` node class.
 "bindings/python/tests/precompile/extract_alt_bn128_cases.py" = ["N802"]
 # This fork's embedded tools are terse scripts: generators of Lean code and counters of traces.
@@ -127,9 +128,15 @@ python-version = "3.12"
 root = ["bindings/python", "bindings/python/tests", "scripts", "embedded/gen/keccak"]
 
 [tool.ty.src]
-# The benchmarks and the key generator import the reference specifications,
-# which only their own environments install.
-exclude = [".claude/", "benchmarks/", "tests/consensus/pq_keys/generate.py"]
+# The key and SSZ limit generators import ssz-specs as `ssz`, which resolves here to the tests.
+# Only their own environments install ssz-specs.
+# The generator of the large-amount vectors runs inside the consensus specification.
+exclude = [
+  ".claude/",
+  "tests/consensus/pq_keys/generate.py",
+  "tests/serialization/ssz_limits/generate.py",
+  "tests/consensus/large_amounts/generator",
+]
 
 [tool.ty.analysis]
 # setup.py runs in the build environment, which installs setuptools.

@@ -8,6 +8,7 @@ from typing import Any, Literal, TypeAlias
 from ethlib.cryptography import _native
 from ethlib.errors import (
     ConsensusError,
+    DepositTreeError,
     ForkChoiceError,
     LightClientError,
     ProposerError,
@@ -44,9 +45,48 @@ def compute_columns_for_custody_group(custody_group: int, name: str = "mainnet")
     return _native.consensus_compute_columns_for_custody_group(name, custody_group)
 
 
+def get_custody_column_bits(node_id: int, custody_group_count: int, name: str = "mainnet") -> bytes:
+    """The SSZ bitvector of the columns that a node custodies, or ConsensusError."""
+    return _native.consensus_get_custody_column_bits(name, node_id, custody_group_count)
+
+
 def ssz_static(name: str, fork: str, type_name: str, data: bytes) -> tuple[bytes, bytes]:
     """The root of the beacon container that SSZ bytes encode, and its bytes encoded again."""
     return _native.consensus_ssz_static(name, fork, type_name, data)
+
+
+def is_valid_builder_signature(
+    name: str,
+    fork: str,
+    type_name: str,
+    data: bytes,
+    # `Any`, because `dict` is invariant in its values.
+    config: dict[str, Any] | None = None,
+) -> bool:
+    """Whether a signed registration or bid of the Builder API verifies."""
+    return _native.consensus_is_valid_builder_signature(name, fork, config, type_name, data)
+
+
+def verify_builder_request_auth_signature(
+    name: str,
+    fork: str,
+    pubkey: bytes,
+    data: bytes,
+    # `Any`, because `dict` is invariant in its values.
+    config: dict[str, Any] | None = None,
+) -> bool:
+    """Whether the proposer key signed a Gloas request authentication; data and slot unchecked."""
+    return _native.consensus_verify_builder_request_auth_signature(name, fork, config, pubkey, data)
+
+
+def builder_bid_value(value: int, execution_payment: int, max_execution_payment: int) -> int:
+    """The bid's value in Gwei, with its execution payment capped, not reduced to 64 bits."""
+    return _native.consensus_builder_bid_value(value, execution_payment, max_execution_payment)
+
+
+def upgrade_operation(name: str, type_name: str, data: bytes) -> tuple[bytes, bytes]:
+    """The Gloas root and bytes of a Fulu attestation, indexed attestation or attester slashing."""
+    return _native.consensus_upgrade_operation(name, type_name, data)
 
 
 def pq_keys_ssz(type_name: str, data: bytes) -> tuple[bytes, bytes]:
@@ -101,9 +141,9 @@ def reqresp_message(name: str, fork: str, type_name: str, data: bytes) -> tuple[
     return _native.consensus_reqresp_message(name, fork, type_name, data)
 
 
-def compute_min_epochs_for_block_requests(name: str = "mainnet") -> int:
-    """The fewest epochs back from the current one over which a node must serve blocks."""
-    return _native.consensus_compute_min_epochs_for_block_requests(name)
+def compute_min_epochs_for_block_requests(fork: str, name: str = "mainnet") -> int:
+    """The fewest epochs back from the current one that a node must serve blocks for, at a fork."""
+    return _native.consensus_compute_min_epochs_for_block_requests(name, fork)
 
 
 def gossip_topics(fork: str, name: str = "mainnet") -> list[str]:
@@ -121,6 +161,39 @@ def reqresp_response_bounds(
 ) -> tuple[int, int]:
     """The smallest and the largest length of a successful response chunk at its fork."""
     return _native.consensus_reqresp_response_bounds(name, chunk_fork, protocol)
+
+
+# What a response check reads from each item, field by field.
+# A block: its slot, the root of its parent and its own root.
+ResponseBlock: TypeAlias = tuple[int, bytes, bytes]
+# A blob or column sidecar: the slot and root of its block, and its index.
+ResponseSidecar: TypeAlias = tuple[int, bytes, int]
+# A payload envelope: its slot, its block root, the parent hash and the block hash of its payload.
+ResponseEnvelope: TypeAlias = tuple[int, bytes, bytes, bytes]
+# An inclusion list: its slot, its validator index and its dependent root.
+ResponseInclusionList: TypeAlias = tuple[int, int, bytes]
+ResponseItems: TypeAlias = (
+    Sequence[ResponseBlock]
+    | Sequence[ResponseSidecar]
+    | Sequence[ResponseEnvelope]
+    | Sequence[ResponseInclusionList]
+)
+
+
+def reqresp_is_valid_response(
+    fork: str,
+    protocol: str,
+    request: bytes,
+    items: ResponseItems,
+    committee: Sequence[int] = (),
+    name: str = "mainnet",
+) -> bool:
+    """Whether the items of a response are valid for the SSZ request of a protocol ID at a fork."""
+    # The committee counts only for inclusion lists, as the validator of each seat.
+    native_items: list[tuple[int | bytes, ...]] = list(items)
+    return _native.consensus_reqresp_response_valid(
+        name, fork, protocol, request, native_items, list(committee)
+    )
 
 
 def gossip_topic_bound(fork: str, topic: str, name: str = "mainnet") -> int:
@@ -303,6 +376,62 @@ def create_light_client_update(
         attested_state,
         attested_block,
         finalized_block or None,
+    )
+
+
+# The light client containers that a light client update gives.
+UpdateType: TypeAlias = Literal[
+    "LightClientUpdate", "LightClientFinalityUpdate", "LightClientOptimisticUpdate"
+]
+
+
+def light_client_update_as(name: str, fork: str, type_name: UpdateType, update: bytes) -> bytes:
+    """The SSZ bytes of a light client update, or of its finality or optimistic update."""
+    return _native.consensus_light_client_update_as(name, fork, type_name, update)
+
+
+# The outcome of a gossip message: valid with no reason, or ignore or reject with its reason.
+GossipOutcome: TypeAlias = tuple[Literal["valid"], None] | tuple[Literal["ignore", "reject"], str]
+
+
+def light_client_gossip_full_node(
+    name: str,
+    fork: str,
+    genesis_time_ms: int,
+    messages: Sequence[tuple[str, int, bytes, bytes | None]],
+    config: dict[str, Any] | None = None,
+) -> list[GossipOutcome]:
+    """The outcome of each light client update on gossip at a full node, in turn."""
+    # A message is (topic, arrival time in ms, SSZ bytes, the node's latest update or None).
+    return _native.consensus_light_client_gossip_full_node(
+        name, fork, config, genesis_time_ms, list(messages)
+    )
+
+
+def light_client_gossip_light_client(
+    name: str,
+    fork: str,
+    genesis_time_ms: int,
+    trusted_block_root: bytes,
+    genesis_validators_root: bytes,
+    bootstrap: bytes,
+    messages: Sequence[tuple[str, int, bytes]],
+    verify: bool = True,
+    config: dict[str, Any] | None = None,
+) -> list[GossipOutcome]:
+    """The outcome of each light client update on gossip at a light client, in turn."""
+    # A message is (topic, arrival time in milliseconds, SSZ bytes).
+    # The store starts from the bootstrap and processes every update, whatever its outcome.
+    return _native.consensus_light_client_gossip_light_client(
+        name,
+        fork,
+        config,
+        genesis_time_ms,
+        trusted_block_root,
+        genesis_validators_root,
+        bootstrap,
+        verify,
+        list(messages),
     )
 
 
@@ -585,6 +714,70 @@ def is_within_weak_subjectivity_period(
     )
 
 
+# An item of a deposit tree in preorder: "node", which its two subtrees follow.
+# Or a subtree: ("zero", height), ("leaf", root) or ("finalized", count, root).
+DepositSubtree: TypeAlias = (
+    Literal["node"]
+    | tuple[Literal["zero"], int]
+    | tuple[Literal["leaf"], bytes]
+    | tuple[Literal["finalized"], int, bytes]
+)
+# A tree is its subtrees in preorder, its count of deposits, and its finalized block.
+# Every function that reads a tree raises DepositTreeError when it has not that shape.
+DepositTree: TypeAlias = tuple[list[DepositSubtree], int, tuple[bytes, int] | None]
+# The finalized roots, the deposit root, the count, and the hash and height of the block.
+DepositTreeSnapshot: TypeAlias = tuple[list[bytes], bytes, int, bytes, int]
+# Deposit data of the chain: the deposit root, the deposit count and the block hash.
+Eth1Data: TypeAlias = tuple[bytes, int, bytes]
+
+
+def deposit_tree_new() -> DepositTree:
+    """The deposit tree with no deposit."""
+    return _native.consensus_deposit_tree_new()
+
+
+def deposit_tree_push_leaf(tree: DepositTree, leaf: bytes) -> DepositTree:
+    """The tree with one more deposit, by the root of its data, or DepositTreeError."""
+    return _native.consensus_deposit_tree_push_leaf(tree, leaf)
+
+
+def deposit_tree_push_leaves(tree: DepositTree, leaves: list[bytes]) -> DepositTree:
+    """The tree after pushing deposits in order, by the roots of their data, or DepositTreeError."""
+    return _native.consensus_deposit_tree_push_leaves(tree, leaves)
+
+
+def deposit_tree_get_root(tree: DepositTree) -> bytes:
+    """The deposit root of a tree, or DepositTreeError."""
+    return _native.consensus_deposit_tree_get_root(tree)
+
+
+def deposit_tree_finalize(
+    tree: DepositTree, eth1_data: Eth1Data, execution_block_height: int
+) -> DepositTree:
+    """The tree finalized at deposit data and the height of its block, or DepositTreeError."""
+    return _native.consensus_deposit_tree_finalize(tree, eth1_data, execution_block_height)
+
+
+def deposit_tree_get_proof(tree: DepositTree, index: int) -> tuple[bytes, list[bytes]]:
+    """The leaf at an index and its proof: 32 sibling roots, then the count, or DepositTreeError."""
+    return _native.consensus_deposit_tree_get_proof(tree, index)
+
+
+def deposit_tree_get_snapshot(tree: DepositTree) -> DepositTreeSnapshot:
+    """The EIP-4881 snapshot of a finalized tree, or DepositTreeError."""
+    return _native.consensus_deposit_tree_get_snapshot(tree)
+
+
+def deposit_tree_from_snapshot(snapshot: DepositTreeSnapshot) -> DepositTree:
+    """The tree rebuilt from an EIP-4881 snapshot, or DepositTreeError."""
+    return _native.consensus_deposit_tree_from_snapshot(snapshot)
+
+
+def deposit_tree_snapshot_calculate_root(snapshot: DepositTreeSnapshot) -> bytes:
+    """The deposit root that a snapshot's finalized roots and count compute, or DepositTreeError."""
+    return _native.consensus_deposit_tree_snapshot_calculate_root(snapshot)
+
+
 def get_committee_assignment(
     name: str,
     fork: str,
@@ -751,7 +944,7 @@ def read_slashing_interchange(text: bytes) -> bytes:
 
 
 def import_slashing_interchange(held: bytes, file: bytes) -> bytes:
-    """The record of a signer that keeps every message, after it imports a file."""
+    """The record after importing a file with the minimal strategy of EIP-3076."""
     return _native.consensus_import_slashing_interchange(held, file)
 
 
@@ -786,7 +979,7 @@ def record_attestation_signing(
 
 
 def is_execution_block(name: str, fork: str, block: bytes) -> bool:
-    """From Bellatrix, whether a block carries a payload other than the empty one."""
+    """From Bellatrix, whether a block has a non-empty payload; from Gloas, a nonzero bid hash."""
     return _native.consensus_is_execution_block(name, fork, block)
 
 
@@ -800,11 +993,18 @@ def is_optimistic_candidate_block(
 
 
 def latest_verified_ancestor(
-    name: str, fork: str, blocks: Sequence[bytes], optimistic_roots: Sequence[bytes], root: bytes
+    name: str,
+    fork: str,
+    blocks: Sequence[bytes],
+    optimistic_roots: Sequence[bytes],
+    root: bytes,
+    payload_status: int = 2,
 ) -> bytes:
     """From Bellatrix, the root of the latest block of a chain that is not optimistic."""
+    # The status of the payload of the block in the node: 0 empty, 1 full and 2 pending.
+    # From Gloas the status matters: a pending node holds only the payloads its block builds on.
     return _native.consensus_latest_verified_ancestor(
-        name, fork, list(blocks), list(optimistic_roots), root
+        name, fork, list(blocks), list(optimistic_roots), root, payload_status
     )
 
 
@@ -823,6 +1023,71 @@ def on_invalidated_payload(
     """From Bellatrix, the optimistic roots after a block is found to be the first invalid one."""
     return _native.consensus_on_invalidated_payload(
         name, fork, list(blocks), list(optimistic_roots), first
+    )
+
+
+def is_optimistic_node(
+    name: str,
+    fork: str,
+    anchor_state: bytes,
+    anchor_block: bytes,
+    steps: Sequence[ForkChoiceStep],
+    optimistic_roots: Sequence[bytes],
+    head: bytes,
+    verify: bool = True,
+    # `Any`, because `dict` is invariant in its values.
+    config: dict[str, Any] | None = None,
+    head_payload_status: int = 2,
+) -> bool:
+    """From Bellatrix, whether a node is optimistic after the steps of a fork choice run."""
+    # The status of the payload of the head: 0 empty, 1 full and 2 pending, read from Gloas.
+    # A pending head is optimistic when its own payload or the one it builds on is.
+    return _native.consensus_is_optimistic_node(
+        name,
+        fork,
+        anchor_state,
+        anchor_block,
+        list(steps),
+        verify,
+        config,
+        list(optimistic_roots),
+        head,
+        head_payload_status,
+    )
+
+
+def inclusion_list_satisfaction(
+    name: str,
+    fork: str,
+    anchor_state: bytes,
+    anchor_block: bytes,
+    steps: Sequence[ForkChoiceStep],
+    validation_status: int,
+    satisfied: bool,
+    roots: Sequence[bytes],
+    *,
+    validated_root: bytes | None = None,
+    verify: bool = True,
+    # `Any`, because `dict` is invariant in its values.
+    config: dict[str, Any] | None = None,
+) -> list[bool | None]:
+    """From Heze, the recorded inclusion list answers for the roots after a fork choice run."""
+    # Every payload has one validation status, 0 valid, 1 invalidated or 2 not validated.
+    # The execution layer gives every payload the same answer, `satisfied`.
+    # Only a payload kept not validated is optimistic, so only it can turn valid.
+    # `validated_root`, if given, names such a payload, which then turns valid with `satisfied`.
+    return _native.consensus_inclusion_list_satisfaction(
+        name,
+        fork,
+        anchor_state,
+        anchor_block,
+        list(steps),
+        verify,
+        config,
+        validation_status,
+        satisfied,
+        validated_root,
+        list(roots),
     )
 
 
@@ -969,8 +1234,13 @@ __all__ = [
     "parameters",
     "ConsensusError",
     "get_custody_groups",
+    "get_custody_column_bits",
     "compute_columns_for_custody_group",
     "ssz_static",
+    "is_valid_builder_signature",
+    "verify_builder_request_auth_signature",
+    "builder_bid_value",
+    "upgrade_operation",
     "pq_keys_ssz",
     "pq_keys_possession_signing_root",
     "pq_keys_is_valid_possession_proof",
@@ -984,6 +1254,12 @@ __all__ = [
     "gossip_topic_bound",
     "reqresp_request_bounds",
     "reqresp_response_bounds",
+    "ResponseBlock",
+    "ResponseSidecar",
+    "ResponseEnvelope",
+    "ResponseInclusionList",
+    "ResponseItems",
+    "reqresp_is_valid_response",
     "compute_subnet_for_attestation",
     "compute_subnet_for_blob_sidecar",
     "compute_subnet_for_data_column_sidecar",
@@ -1025,6 +1301,11 @@ __all__ = [
     "genesis_block",
     "create_light_client_bootstrap",
     "create_light_client_update",
+    "light_client_update_as",
+    "GossipOutcome",
+    "UpdateType",
+    "light_client_gossip_full_node",
+    "light_client_gossip_light_client",
     "compute_fork_digest",
     "process_epoch",
     "rewards_deltas",
@@ -1032,6 +1313,20 @@ __all__ = [
     "upgrade_state",
     "compute_weak_subjectivity_period",
     "is_within_weak_subjectivity_period",
+    "DepositTreeError",
+    "DepositSubtree",
+    "DepositTree",
+    "DepositTreeSnapshot",
+    "Eth1Data",
+    "deposit_tree_push_leaves",
+    "deposit_tree_new",
+    "deposit_tree_push_leaf",
+    "deposit_tree_get_root",
+    "deposit_tree_finalize",
+    "deposit_tree_get_proof",
+    "deposit_tree_get_snapshot",
+    "deposit_tree_from_snapshot",
+    "deposit_tree_snapshot_calculate_root",
     "get_committee_assignment",
     "is_proposer",
     "is_assigned_to_sync_committee",
@@ -1041,6 +1336,8 @@ __all__ = [
     "get_validator_signature",
     "is_execution_block",
     "is_optimistic_candidate_block",
+    "is_optimistic_node",
+    "inclusion_list_satisfaction",
     "latest_verified_ancestor",
     "on_valid_payload",
     "on_invalidated_payload",

@@ -13,9 +13,55 @@ There, a checkpoint is an epoch boundary pair: a block with an epoch.
 
 A preorder on blocks gives the chains: `a ≤ b` means that `a` is in the chain of `b`.
 
-One validator set `V` and one stake function `w` hold for every vote, as in both papers.
+Each checkpoint `c` has its own validator set `V c`, as Gasper §8.6 gives each block its own set.
 
-A supermajority link counts only the stake of validators in `V`.
+So one epoch can have two sets on two conflicting branches.
+
+A supermajority link counts only the stake of the validators of its target checkpoint.
+
+Gasper §8.6 counts the stake of the attestation epoch of a pair, which Gasper §4.1 defines.
+
+One stake function `w` holds for every validator, as Gasper §8.6 assumes.
+
+A constant set gives the model of Casper FFG §2 and Gasper §4, with one set for all votes.
+
+A slack link weakens a supermajority link by a second set `U c` for each checkpoint `c`.
+
+A chain can count the votes for `c` against the stake of a later set `U c`, not of `V c`.
+
+A validator of `V c` that left before `U c` then counts as a voter, but not in the total.
+
+The slack is the stake of such validators, the set `E(V c, U c)` of Gasper §8.6, Definition 8.1.
+
+Gasper has no slack: there each quorum holds two thirds of its own set.
+
+Accountable safety then loses twice the slack of each of the two links that it finds.
+
+The slack of earlier links does not add up.
+
+Nothing ties `U` to `V`: with an empty second set, every ordered link is a slack link.
+
+So the safety bounds say something only when the slack is bounded, as the exit churn bounds it.
+
+A slack link also lets each checkpoint `c` have a set `W c` of weights, not one stake function.
+
+The link holds when its bound holds under one choice of weights in `W t`, for its target `t`.
+
+A balance can change from one checkpoint to the next, and between two branches.
+
+Two branches can justify one checkpoint from two states, each with its own balances.
+
+A set of weights holds them both, where a single weights function could not.
+
+Nothing bounds `W` either: with the zero weights in `W t`, every ordered link is a slack link.
+
+So the bounds say something only when every choice of weights in each set stays near a reference.
+
+With `U = V` and the single stake function `w` in each set, a slack link is a supermajority link.
+
+Justification and finalization take the kind of link as a parameter.
+
+Supermajority links and slack links are two kinds.
 -/
 
 @[expose] public section
@@ -87,49 +133,205 @@ The source comes before the target, in epoch and in the chain of the target.
 
 Casper FFG §2 ignores a vote that breaks this order.
 
-Validators of `V` that hold at least two thirds of its stake vote for the link. -/
-def SupermajorityLink (V : Finset ν) (w : ν → ℕ) (votes : Set (Vote ν β))
-    (s t : Checkpoint β) : Prop :=
-  s.epoch < t.epoch ∧ s.block ≤ t.block ∧ 2 * stake w V ≤ 3 * stake w (signers V votes s t)
+Validators of the set of the target vote for the link.
 
-/-- The justified checkpoints.
+They hold at least two thirds of the stake of that set. -/
+def SupermajorityLink (V : Checkpoint β → Finset ν) (w : ν → ℕ) (votes : Set (Vote ν β))
+    (s t : Checkpoint β) : Prop :=
+  s.epoch < t.epoch ∧ s.block ≤ t.block ∧ 2 * stake w (V t) ≤ 3 * stake w (signers (V t) votes s t)
+
+open scoped Classical in
+/-- A slack link from `s` to `t`: a supermajority link up to a slack.
+
+The source comes before the target, in epoch and in the chain of the target.
+
+The slack is the stake of the set `V t` outside the set `U t`.
+
+Some weights `w` of the set `W t` give the bound below.
+
+Under `w`, twice the stake of `V t` is at most three times that of its voters plus twice the slack.
+-/
+def SlackLink (V U : Checkpoint β → Finset ν) (W : Checkpoint β → Set (ν → ℕ))
+    (votes : Set (Vote ν β)) (s t : Checkpoint β) : Prop :=
+  s.epoch < t.epoch ∧ s.block ≤ t.block ∧ ∃ w ∈ W t,
+    2 * stake w (V t) ≤ 3 * stake w (signers (V t) votes s t) + 2 * stake w (V t \ U t)
+
+/-- The checkpoints justified by a kind of link.
 
 The genesis block at epoch 0 is justified.
 
-A supermajority link from a justified checkpoint justifies its target. -/
-inductive Justified (V : Finset ν) (w : ν → ℕ) (genesis : β) (votes : Set (Vote ν β)) :
+A link from a justified checkpoint justifies its target. -/
+inductive JustifiedBy (link : Checkpoint β → Checkpoint β → Prop) (genesis : β) :
     Checkpoint β → Prop
   /-- The genesis checkpoint is justified. -/
-  | root : Justified V w genesis votes ⟨genesis, 0⟩
-  /-- A supermajority link from a justified checkpoint justifies its target. -/
-  | link {s t : Checkpoint β} :
-      Justified V w genesis votes s → SupermajorityLink V w votes s t →
-        Justified V w genesis votes t
+  | root : JustifiedBy link genesis ⟨genesis, 0⟩
+  /-- A link from a justified checkpoint justifies its target. -/
+  | link {s t : Checkpoint β} : JustifiedBy link genesis s → link s t → JustifiedBy link genesis t
 
-/-- The checkpoint `c` is `k`-finalized, as in Gasper Definition 4.9.
+/-- The checkpoint `c` is `k`-finalized by a kind of link, as in Gasper Definition 4.9.
 
 Blocks `b 0, ..., b k` start at the block of `c`, and each one is in the chain of the next.
 
 The checkpoints `(b i, e + i)` for `i < k` are justified, where `e` is the epoch of `c`.
 
-A supermajority link goes from `c` to `(b k, e + k)`.
+A link goes from `c` to `(b k, e + k)`.
 
 Gasper also asks that these checkpoints are epoch boundary pairs.
 
 The model drops that condition.
 
 It then finalizes more checkpoints, so its safety theorem is stronger. -/
-def KFinalized (V : Finset ν) (w : ν → ℕ) (genesis : β) (votes : Set (Vote ν β)) (k : ℕ)
+def KFinalizedBy (link : Checkpoint β → Checkpoint β → Prop) (genesis : β) (k : ℕ)
     (c : Checkpoint β) : Prop :=
   ∃ b : ℕ → β, b 0 = c.block ∧ (∀ i < k, b i ≤ b (i + 1)) ∧
-    (∀ i < k, Justified V w genesis votes ⟨b i, c.epoch + i⟩) ∧
-    SupermajorityLink V w votes c ⟨b k, c.epoch + k⟩
+    (∀ i < k, JustifiedBy link genesis ⟨b i, c.epoch + i⟩) ∧ link c ⟨b k, c.epoch + k⟩
 
-/-- The finalized checkpoints: the genesis checkpoint, and every `k`-finalized one with `k ≥ 1`.
+/-- The checkpoints finalized by a kind of link.
+
+They are the genesis checkpoint, and every `k`-finalized one with `k ≥ 1`.
 
 The case `k = 1` is the finalization of Casper FFG §2. -/
-def Finalized (V : Finset ν) (w : ν → ℕ) (genesis : β) (votes : Set (Vote ν β))
+def FinalizedBy (link : Checkpoint β → Checkpoint β → Prop) (genesis : β)
     (c : Checkpoint β) : Prop :=
-  c = ⟨genesis, 0⟩ ∨ ∃ k, 1 ≤ k ∧ KFinalized V w genesis votes k c
+  c = ⟨genesis, 0⟩ ∨ ∃ k, 1 ≤ k ∧ KFinalizedBy link genesis k c
+
+/-- The checkpoints justified by supermajority links. -/
+abbrev Justified (V : Checkpoint β → Finset ν) (w : ν → ℕ) (genesis : β)
+    (votes : Set (Vote ν β)) : Checkpoint β → Prop :=
+  JustifiedBy (SupermajorityLink V w votes) genesis
+
+/-- The checkpoints `k`-finalized by supermajority links. -/
+abbrev KFinalized (V : Checkpoint β → Finset ν) (w : ν → ℕ) (genesis : β)
+    (votes : Set (Vote ν β)) (k : ℕ) : Checkpoint β → Prop :=
+  KFinalizedBy (SupermajorityLink V w votes) genesis k
+
+/-- The checkpoints finalized by supermajority links. -/
+abbrev Finalized (V : Checkpoint β → Finset ν) (w : ν → ℕ) (genesis : β)
+    (votes : Set (Vote ν β)) : Checkpoint β → Prop :=
+  FinalizedBy (SupermajorityLink V w votes) genesis
+
+/-- The checkpoints justified by slack links. -/
+abbrev SlackJustified (V U : Checkpoint β → Finset ν) (W : Checkpoint β → Set (ν → ℕ))
+    (genesis : β) (votes : Set (Vote ν β)) : Checkpoint β → Prop :=
+  JustifiedBy (SlackLink V U W votes) genesis
+
+/-- The checkpoints finalized by slack links. -/
+abbrev SlackFinalized (V U : Checkpoint β → Finset ν) (W : Checkpoint β → Set (ν → ℕ))
+    (genesis : β) (votes : Set (Vote ν β)) : Checkpoint β → Prop :=
+  FinalizedBy (SlackLink V U W votes) genesis
+
+variable {V U : Checkpoint β → Finset ν} {W : Checkpoint β → Set (ν → ℕ)} {w : ν → ℕ}
+  {votes : Set (Vote ν β)}
+  {link link' : Checkpoint β → Checkpoint β → Prop} {genesis : β}
+
+/-- A slack link is a supermajority link when it has no slack and one stake function.
+
+The second sets are then the validator sets, and each set of weights holds one function. -/
+theorem slackLink_self : SlackLink V V (fun _ => {w}) votes = SupermajorityLink V w votes := by
+  funext s t
+  simp only [SlackLink, SupermajorityLink, Finset.sdiff_self, stake_empty, Nat.mul_zero,
+    Nat.add_zero, Set.mem_singleton_iff, exists_eq_left]
+
+/-- A supermajority link is a slack link for every choice of second sets.
+
+Its stake function is then the weights of every checkpoint. -/
+theorem SupermajorityLink.slackLink (U : Checkpoint β → Finset ν) {s t : Checkpoint β}
+    (h : SupermajorityLink V w votes s t) : SlackLink V U (fun _ => {w}) votes s t :=
+  ⟨h.1, h.2.1, w, rfl, h.2.2.trans (Nat.le_add_right _ _)⟩
+
+omit [Preorder β] in
+/-- A weaker kind of link justifies more checkpoints. -/
+theorem JustifiedBy.imp (weaker : ∀ {s t}, link s t → link' s t) {c : Checkpoint β}
+    (h : JustifiedBy link genesis c) : JustifiedBy link' genesis c := by
+  induction h with
+  | root => exact .root
+  | link _ hl ih => exact .link ih (weaker hl)
+
+/-- A weaker kind of link finalizes more checkpoints. -/
+theorem FinalizedBy.imp (weaker : ∀ {s t}, link s t → link' s t) {c : Checkpoint β}
+    (h : FinalizedBy link genesis c) : FinalizedBy link' genesis c := by
+  rcases h with rfl | ⟨k, hk, b, hb, hchain, hj, hl⟩
+  · exact .inl rfl
+  · exact .inr ⟨k, hk, b, hb, hchain, fun i hi => (hj i hi).imp weaker, weaker hl⟩
+
+/-- A justified checkpoint with a link to the next epoch is finalized, with `k = 1`.
+
+The block of the target must be above that of the checkpoint. -/
+theorem FinalizedBy.of_one {c t : Checkpoint β} (justified : JustifiedBy link genesis c)
+    (order : c.block ≤ t.block) (epochs : t.epoch = c.epoch + 1) (linked : link c t) :
+    FinalizedBy link genesis c := by
+  refine .inr ⟨1, le_rfl, fun i => if i = 0 then c.block else t.block, rfl, ?_, ?_, ?_⟩
+  · intro i small
+    obtain rfl : i = 0 := by omega
+    simpa using order
+  · intro i small
+    obtain rfl : i = 0 := by omega
+    simpa using justified
+  · have target : (⟨t.block, c.epoch + 1⟩ : Checkpoint β) = t := by
+      rw [← epochs]
+    simpa [target] using linked
+
+/-- A justified checkpoint is finalized with `k = 2`.
+
+The checkpoint of the next epoch must be justified, and a link must reach the epoch after.
+
+The blocks of the three checkpoints must be in order. -/
+theorem FinalizedBy.of_two {c m t : Checkpoint β} (justified : JustifiedBy link genesis c)
+    (middle : JustifiedBy link genesis m) (first : c.block ≤ m.block) (second : m.block ≤ t.block)
+    (middleEpoch : m.epoch = c.epoch + 1) (epochs : t.epoch = c.epoch + 2) (linked : link c t) :
+    FinalizedBy link genesis c := by
+  refine .inr ⟨2, by omega,
+    fun i => if i = 0 then c.block else if i = 1 then m.block else t.block, rfl, ?_, ?_, ?_⟩
+  · intro i small
+    rcases (by omega : i = 0 ∨ i = 1) with rfl | rfl
+    · simpa using first
+    · simpa using second
+  · intro i small
+    rcases (by omega : i = 0 ∨ i = 1) with rfl | rfl
+    · simpa using justified
+    · have target : (⟨m.block, c.epoch + 1⟩ : Checkpoint β) = m := by
+        rw [← middleEpoch]
+      simpa [target] using middle
+  · have target : (⟨t.block, c.epoch + 2⟩ : Checkpoint β) = t := by
+      rw [← epochs]
+    simpa [target] using linked
+
+/-- A slack link with one stake function is a supermajority link when it has no slack.
+
+That holds when its target set lies in its second set. -/
+theorem SlackLink.supermajorityLink {s t : Checkpoint β} (inside : V t ⊆ U t)
+    (h : SlackLink V U (fun _ => {w}) votes s t) : SupermajorityLink V w votes s t := by
+  classical
+  obtain ⟨epochs, chain, w', rfl, bound⟩ := h
+  have empty : V t \ U t = ∅ := Finset.sdiff_eq_empty_iff_subset.mpr inside
+  rw [empty, stake_empty] at bound
+  exact ⟨epochs, chain, by simpa using bound⟩
+
+/-- A supermajority link raises the epoch, and its source block is in the chain of its target. -/
+theorem SupermajorityLink.ordered {s t : Checkpoint β} (h : SupermajorityLink V w votes s t) :
+    s.epoch < t.epoch ∧ s.block ≤ t.block :=
+  ⟨h.1, h.2.1⟩
+
+/-- A slack link raises the epoch, and its source block is in the chain of its target. -/
+theorem SlackLink.ordered {s t : Checkpoint β} (h : SlackLink V U W votes s t) :
+    s.epoch < t.epoch ∧ s.block ≤ t.block :=
+  ⟨h.1, h.2.1⟩
+
+/-- With no slack and one stake function, slack-justified means justified. -/
+theorem slackJustified_self :
+    SlackJustified V V (fun _ => {w}) genesis votes = Justified V w genesis votes := by
+  rw [SlackJustified, slackLink_self]
+
+/-- With no slack and one stake function, slack-finalized means finalized. -/
+theorem slackFinalized_self :
+    SlackFinalized V V (fun _ => {w}) genesis votes = Finalized V w genesis votes := by
+  rw [SlackFinalized, slackLink_self]
+
+/-- A finalized checkpoint is slack-finalized for every choice of second sets.
+
+Its stake function is then the weights of every checkpoint. -/
+theorem Finalized.slackFinalized (U : Checkpoint β → Finset ν) {c : Checkpoint β}
+    (h : Finalized V w genesis votes c) : SlackFinalized V U (fun _ => {w}) genesis votes c :=
+  FinalizedBy.imp (SupermajorityLink.slackLink U) h
 
 end EthLib.Consensus.Models.Ffg

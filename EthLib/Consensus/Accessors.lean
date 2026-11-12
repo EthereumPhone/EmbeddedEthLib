@@ -21,6 +21,12 @@ A sum of 2^64 or more is an error, as in 64-bit arithmetic.
 
 The committees cut the shuffled active validators of an epoch, and the proposer is drawn from them.
 
+The members of the committees of a slot are cut from one shuffle, computed once for the slot.
+
+From Electra, the committees of one attestation are cut from one shuffle too.
+
+A caller that holds the shuffle of the epoch of the slot of an attestation can cut its signers.
+
 A failed assertion of the rule, or a read past the end of a list, is an error.
 
 A division by a parameter of the preset or the configuration assumes that it is not zero.
@@ -87,11 +93,27 @@ variable {preset : Preset} {fork : Base.Fork}
 def getCurrentEpoch (state : BeaconState preset fork) : Epoch :=
   computeEpochAtSlot preset state.slot
 
-/-- The indices of the validators active in an epoch, in increasing order. -/
+/-- The indices of the validators active in an epoch, in increasing order.
+
+An active position of `2^64` or more wraps modulo `2^64`, where the specification fails.
+
+The transition guards each read with a checked form, or reads it only where the registry fits. -/
 def getActiveValidatorIndices (state : BeaconState preset fork) (epoch : Epoch) :
     List ValidatorIndex :=
   state.validators.data.toList.zipIdx.filterMap fun (validator, index) =>
     if isActiveValidator validator epoch then some index.toUInt64 else none
+
+/-- An error of a 64-bit operation, as an error of an accessor. -/
+def liftArith {α : Type} (result : Except ArithError α) : Except AccessorError α :=
+  result.mapError .arith
+
+/-- The active indices, or an error when an active position does not fit in 64 bits.
+
+An inactive position is not converted, so it needs no bound. -/
+def getActiveValidatorIndicesChecked (state : BeaconState preset fork) (epoch : Epoch) :
+    Except AccessorError (List ValidatorIndex) :=
+  liftArith ((state.validators.data.toList.zipIdx.filterMap fun (validator, position) =>
+    if isActiveValidator validator epoch then some position else none).mapM ofNatChecked)
 
 /-- The marks of the validators at some indices: one flag per validator of the registry.
 
@@ -121,11 +143,9 @@ def getTotalBalance (state : BeaconState preset fork) (indices : List ValidatorI
 
 /-- The total effective balance of the validators active in the epoch of a state. -/
 def getTotalActiveBalance (state : BeaconState preset fork) : Except AccessorError Gwei :=
-  getTotalBalance state (getActiveValidatorIndices state (getCurrentEpoch state))
-
-/-- An error of a 64-bit operation, as an error of an accessor. -/
-def liftArith {α : Type} (result : Except ArithError α) : Except AccessorError α :=
-  result.mapError .arith
+  do
+    let active ← getActiveValidatorIndicesChecked state (getCurrentEpoch state)
+    getTotalBalance state active
 
 /-- The position `i mod n` is below `n`, for `n ≠ 0`. -/
 theorem toNat_mod_lt {i n : UInt64} (nonzero : n ≠ 0) : (i % n).toNat < n.toNat := by
@@ -267,13 +287,22 @@ def getSeed (state : BeaconState preset fork) (epoch : Epoch) (domainType : Doma
   return Cryptography.Hash.Sha256.hash32
     ⟨domainType.toArray ++ (uintToBytes 8 epoch.toNat).toArray ++ mix.toArray⟩
 
-/-- The number of committees in each slot of an epoch.
+/-- The number of committees in each slot, for a number of active validators.
 
 It aims at a target size of committee, from one up to the most committees in a slot. -/
-def getCommitteeCountPerSlot (state : BeaconState preset fork) (epoch : Epoch) : UInt64 :=
+def committeeCountOf (preset : Preset) (active : UInt64) : UInt64 :=
   max 1 (min preset.MAX_COMMITTEES_PER_SLOT
-    ((getActiveValidatorIndices state epoch).length.toUInt64 / preset.SLOTS_PER_EPOCH /
-      preset.TARGET_COMMITTEE_SIZE))
+    (active / preset.SLOTS_PER_EPOCH / preset.TARGET_COMMITTEE_SIZE))
+
+/-- The number of committees in each slot of an epoch. -/
+def getCommitteeCountPerSlot (state : BeaconState preset fork) (epoch : Epoch) : UInt64 :=
+  committeeCountOf preset (getActiveValidatorIndices state epoch).length.toUInt64
+
+/-- The committee count, or an error when an active position or the active count needs 65 bits. -/
+def getCommitteeCountPerSlotChecked (state : BeaconState preset fork) (epoch : Epoch) :
+    Except AccessorError UInt64 := do
+  let active ← getActiveValidatorIndicesChecked state epoch
+  return committeeCountOf preset (← liftArith (ofNatChecked active.length))
 
 /-- The committee of a slot with a given index, cut from active validators in a shuffled order.
 
@@ -290,6 +319,18 @@ def beaconCommitteeOf (preset : Preset) (slot : Slot) (index : CommitteeIndex) (
   let count ← liftArith (mulChecked perSlot preset.SLOTS_PER_EPOCH)
   (shuffledCommittee active shuffled position count).mapError .shuffle
 
+/-- The active validators of an epoch, and their shuffle for the beacon committees.
+
+It fails as the shuffle does, for more than `2^40` active validators.
+
+It also fails at an active position or an active count of `2^64` or more. -/
+def attesterShuffle (state : BeaconState preset fork) (epoch : Epoch) :
+    Except AccessorError (Array ValidatorIndex × Array UInt64) := do
+  let seed ← getSeed state epoch DOMAIN_BEACON_ATTESTER
+  let active := (← getActiveValidatorIndicesChecked state epoch).toArray
+  let count ← liftArith (ofNatChecked active.size)
+  return (active, ← (computeShuffledPermutation preset count seed).mapError .shuffle)
+
 /-- The committee of a slot with a given index, cut from the shuffled active validators.
 
 The committees of an epoch are numbered across its slots, in the order of the slots.
@@ -298,22 +339,46 @@ It fails as the shuffle does, for more than `2^40` active validators. -/
 def getBeaconCommittee (state : BeaconState preset fork) (slot : Slot) (index : CommitteeIndex) :
     Except AccessorError (Array ValidatorIndex) := do
   let epoch := computeEpochAtSlot preset slot
-  let seed ← getSeed state epoch DOMAIN_BEACON_ATTESTER
-  let active := (getActiveValidatorIndices state epoch).toArray
-  let shuffled ← (computeShuffledPermutation preset (UInt64.ofNat active.size) seed).mapError
-    .shuffle
+  let (active, shuffled) ← attesterShuffle state epoch
   beaconCommitteeOf preset slot index (getCommitteeCountPerSlot state epoch) active shuffled
+
+/-- The members of the beacon committees of a slot, committee after committee.
+
+They are cut from the given active validators and shuffle, with the given count of committees.
+
+The caller computes the count once, since computing it reads the whole registry. -/
+def slotCommitteeMembersOf (preset : Preset) (slot : Slot) (perSlot : UInt64)
+    (active : Array ValidatorIndex) (shuffled : Array UInt64) :
+    Except AccessorError (Array ValidatorIndex) :=
+  (List.range perSlot.toNat).foldlM
+    (fun members index => do
+      return members ++ (← beaconCommitteeOf preset slot index.toUInt64 perSlot active shuffled))
+    #[]
+
+/-- The members of the beacon committees of a slot, committee after committee.
+
+The committees share one shuffle of the active validators, computed once for the slot. -/
+def slotCommitteeMembers (state : BeaconState preset fork) (slot : Slot) :
+    Except AccessorError (Array ValidatorIndex) := do
+  let epoch := computeEpochAtSlot preset slot
+  let (active, shuffled) ← attesterShuffle state epoch
+  slotCommitteeMembersOf preset slot (getCommitteeCountPerSlot state epoch) active shuffled
 
 /-- The number of draws that read one hash: 16 from Electra, 32 before. -/
 def drawsPerHash (fork : Base.Fork) : Nat :=
   if .pectra ≤ fork then 16 else 32
 
+/-- The input hashed for one block of draws: the seed, then the block number as eight bytes.
+
+The bytes are little-endian. -/
+def drawInput (seed : Bytes32) (block : Nat) : ByteArray :=
+  ⟨seed.toArray ++ (uintToBytes 8 block).toArray⟩
+
 /-- The hash that draw number `i` reads its random bytes from.
 
 The draws come in blocks of the number of draws per hash, and each block has its own hash. -/
 def drawHash (fork : Base.Fork) (seed : Bytes32) (i : Nat) : Bytes32 :=
-  Cryptography.Hash.Sha256.hash32
-    ⟨seed.toArray ++ (uintToBytes 8 (i / drawsPerHash fork)).toArray⟩
+  Cryptography.Hash.Sha256.hash32 (drawInput seed (i / drawsPerHash fork))
 
 /-- A draw that does not start a block reads the hash of the draw before it. -/
 theorem drawHash_succ {fork : Base.Fork} {seed : Bytes32} {i : Nat}
@@ -325,7 +390,13 @@ theorem drawHash_succ {fork : Base.Fork} {seed : Bytes32} {i : Nat}
 
 /-- Whether draw number `i` accepts a candidate of an effective balance, from its hash.
 
-The draw accepts with a chance of the balance over the largest effective balance.
+It accepts when the fork's largest effective balance times the selected value is at most a bound.
+
+The bound is the balance times `2^8 - 1` before Electra, and times `2^16 - 1` from Electra.
+
+The comparison is inclusive, so a selected value of zero is accepted even at zero balance.
+
+It fails when a product does not fit in 64 bits.
 
 Before Electra it compares with byte `i mod 32` of the hash.
 
@@ -408,7 +479,7 @@ def getBeaconProposerIndex (state : BeaconState preset fork) :
     let epochSeed ← getSeed state epoch DOMAIN_BEACON_PROPOSER
     let seed := Cryptography.Hash.Sha256.hash32
       ⟨epochSeed.toArray ++ (uintToBytes 8 state.slot.toNat).toArray⟩
-    computeProposerIndex state (getActiveValidatorIndices state epoch).toArray seed
+    computeProposerIndex state (← getActiveValidatorIndicesChecked state epoch).toArray seed
 
 /-- The signature domain of a kind of message in an epoch, by default the epoch of the state.
 
@@ -438,14 +509,38 @@ def committeeAttesters (bits : Array Bool) (offset : Nat) (committee : Array Val
     .ok (committee.toList.zipIdx.filterMap fun (member, position) =>
       if bits.getD (offset + position) false then some member else none)
 
-/-- From Electra: the attesters of each committee in a list, whose bits follow one another. -/
-def committeesAttesters (state : BeaconState preset fork) (slot : Slot) (bits : Array Bool) :
+/-- From Electra: the attesters of each committee in a list, whose bits follow one another.
+
+The committees are cut from the given active validators and shuffle.
+
+The count of committees per slot is given too. -/
+def committeesAttestersOf (preset : Preset) (slot : Slot) (bits : Array Bool) (perSlot : UInt64)
+    (active : Array ValidatorIndex) (shuffled : Array UInt64) :
     List CommitteeIndex → Nat → Except AccessorError (List ValidatorIndex)
   | [], _ => .ok []
   | index :: rest, offset => do
-    let committee ← getBeaconCommittee state slot index
+    let committee ← beaconCommitteeOf preset slot index perSlot active shuffled
     let here ← committeeAttesters bits offset committee
-    return here ++ (← committeesAttesters state slot bits rest (offset + committee.size))
+    return here ++ (← committeesAttestersOf preset slot bits perSlot active shuffled rest
+      (offset + committee.size))
+
+/-- The validators that an attestation shows as signers, cut from a given shuffle, as a set.
+
+The committees are cut from the given active validators, shuffle and count of committees per slot.
+
+When these are the inputs of the epoch of the slot of the attestation, it is the set of the rule. -/
+def attestingIndicesOf (attestation : Attestation preset fork) (perSlot : UInt64)
+    (active : Array ValidatorIndex) (shuffled : Array UInt64) :
+    Except AccessorError (List ValidatorIndex) := do
+  let bits := attestation.aggregationBits.bits
+  if electra : .pectra ≤ fork then
+    let committees := getCommitteeIndices (attestation.committeeBits electra)
+    return sortedSet (← committeesAttestersOf preset attestation.data.slot bits perSlot active
+      shuffled committees 0)
+  else
+    let committee ← beaconCommitteeOf preset attestation.data.slot attestation.data.index perSlot
+      active shuffled
+    return sortedSet (← committeeAttesters bits 0 committee)
 
 /-- The validators that an attestation shows as signers, as a set.
 
@@ -453,17 +548,34 @@ Before Electra, the bits run over one committee.
 
 From Electra, they run over each committee of the committee bits in turn, as [EIP-7549] specifies.
 
+The committees share one shuffle of the epoch of the slot, computed once.
+
+From Electra, an attestation that names no committee computes no shuffle.
+
 [EIP-7549]: https://eips.ethereum.org/EIPS/eip-7549#consensus-layer
 -/
 def getAttestingIndices (state : BeaconState preset fork) (attestation : Attestation preset fork) :
-    Except AccessorError (List ValidatorIndex) := do
-  let bits := attestation.aggregationBits.bits
-  if electra : .pectra ≤ fork then
-    let committees := getCommitteeIndices (attestation.committeeBits electra)
-    return sortedSet (← committeesAttesters state attestation.data.slot bits committees 0)
-  else
-    let committee ← getBeaconCommittee state attestation.data.slot attestation.data.index
-    return sortedSet (← committeeAttesters bits 0 committee)
+    Except AccessorError (List ValidatorIndex) :=
+  -- The rule reads no committee for an empty list, so it reads no shuffle either.
+  if ∃ electra : .pectra ≤ fork, getCommitteeIndices (attestation.committeeBits electra) = [] then
+    .ok []
+  else do
+    let epoch := computeEpochAtSlot preset attestation.data.slot
+    -- Each committee alone reads the shuffle before its cut, so reading it first changes no error.
+    let (active, shuffled) ← attesterShuffle state epoch
+    attestingIndicesOf attestation (getCommitteeCountPerSlot state epoch) active shuffled
+
+/-- An attestation with the given indices of its signers in place of its bits.
+
+The indices keep their given order.
+
+Before Gloas a list of indices past its limit is an error, and from Gloas the list has no limit. -/
+def indexedAttestationOf (attestation : Attestation preset fork) (indices : List ValidatorIndex) :
+    Except AccessorError (IndexedAttestation preset fork) := do
+  if fits : fork < .glamsterdam → indices.length ≤ maxAttesters preset fork then
+    return ⟨⟨indices.toArray, fun before => by simpa using fits before⟩, attestation.data,
+      attestation.signature⟩
+  else throw (.tooManyAttesters indices.length (maxAttesters preset fork))
 
 /-- An attestation with the sorted indices of its signers in place of its bits.
 
@@ -471,10 +583,6 @@ Before Gloas the list of indices has a limit, and from Gloas it has none. -/
 def getIndexedAttestation (state : BeaconState preset fork)
     (attestation : Attestation preset fork) :
     Except AccessorError (IndexedAttestation preset fork) := do
-  let indices ← getAttestingIndices state attestation
-  if fits : fork < .glamsterdam → indices.length ≤ maxAttesters preset fork then
-    return ⟨⟨indices.toArray, fun before => by simpa using fits before⟩, attestation.data,
-      attestation.signature⟩
-  else throw (.tooManyAttesters indices.length (maxAttesters preset fork))
+  indexedAttestationOf attestation (← getAttestingIndices state attestation)
 
 end EthLib.Consensus

@@ -10,6 +10,7 @@
 # The README of the directory names the pinned commit of each repository.
 #
 # A release archive that is too large to vendor is pinned in the table `archives`.
+# An entry can also pin a single file, which a test reads as it is, without unpacking it.
 # Its entry gives the URL, the size in bytes and the sha256 of the file.
 # An archive can come from an older release than the pin of its repository.
 # An archive of another release line, such as a devnet release, names its release.
@@ -29,6 +30,7 @@ directories = [
   "tests/consensus/fork_choice",
   "tests/consensus/genesis",
   "tests/consensus/gossip",
+  "tests/consensus/large_amounts",
   "tests/consensus/light_client",
   "tests/consensus/merkle_proof", "tests/consensus/networking", "tests/consensus/operations",
   "tests/consensus/parameters",
@@ -39,6 +41,10 @@ directories = [
   "tests/consensus/ssz_static",
   "tests/cryptography/bls",
 ]
+
+[repositories."ethereum/builder-specs"]
+commit = "fce64468a81a87892d7cb9b4858272bb3d010e50"
+directories = ["tests/consensus/builder_api"]
 
 [repositories."ethereum/c-kzg-4844"]
 commit = "a751e2d92abcd63b01d1400789789f5ea289a8b0"
@@ -65,6 +71,10 @@ directories = ["bindings/python/tests/precompile/blake2"]
 [repositories."google/snappy"]
 commit = "7406111ac4ae539ea0db8b7ea2dc76730cd957f4"
 
+# The e2store, era1 and era formats, which the history file tests follow.
+[repositories."eth-clients/e2store-format-specs"]
+commit = "31cf6b577123bf1703eb3713f0b242f65fea806a"
+
 [repositories."ethereum/devp2p"]
 commit = "88f1c80800d622cc3a542a2125bbe33cc18c9f9c"
 
@@ -74,10 +84,18 @@ directories = ["bindings/python/tests/secp256k1/tiny_secp256k1"]
 
 [repositories."ethereum/EIPs"]
 commit = "46976b2a9bf99f727fb87dc8c809e3a3cdc6b445"
-directories = ["bindings/python/tests/state/dao"]
+directories = [
+  "bindings/python/tests/consensus/deposit_tree",
+  "bindings/python/tests/state/dao",
+]
 
 [repositories."ethereum/ERCs"]
 commit = "be307c948f28897adb8f25afcc253c2c909de35d"
+directories = ["tests/cryptography/keystore"]
+
+[repositories."rweather/noise-c"]
+commit = "cfe25410979a87391bb9ac8d4d4bef64e9f268c6"
+directories = ["bindings/python/tests/noise/published_vector"]
 
 [repositories."ethereum/tests"]
 commit = "c67e485ff8b5be9abc8ad15345ec21aa22e290d9"
@@ -131,7 +149,22 @@ release = "v5.3.0"
 [repositories."leanEthereum/leanVM"]
 commit = "5e3ade21d339a45e1b3b0dba97ad9300ab50e49b"
 
-# The release archives, each from a repository above or from the source it names.
+# The libp2p tests read the hex examples and the key vector of these documents.
+# The mplex and yamux tests also read their frame layouts.
+[repositories."multiformats/unsigned-varint"]
+commit = "dd184f1ce89c81808503bb719b5fcb13844d08f3"
+
+[repositories."multiformats/multistream-select"]
+commit = "9a1fbe8edadebea223f47102f1913b8026c23a1c"
+
+[repositories."libp2p/specs"]
+commit = "c750236de43cd8b246a824b377dfdb26bae686db"
+
+# The gossip RPC tests build their frames from the protobuf encoding guide at this commit.
+[repositories."protocolbuffers/protocolbuffers.github.io"]
+commit = "bc2f346991e20631ed0a884e345110738228bfae"
+
+# The release archives and single files, each from a repository above or from the source it names.
 [archives."consensus-specs/v1.7.0-alpha.12/general"]
 repository = "ethereum/consensus-specs"
 url = "https://github.com/ethereum/consensus-specs/releases/download/v1.7.0-alpha.12/general.tar.gz"
@@ -196,8 +229,16 @@ url = "https://github.com/eth-clients/slashing-protection-interchange-tests/arch
 size = 7867
 sha256 = "f59908e927db1e5ceefec3a4d224cc6434b1a0e24eb5a57c8f31fc1b157cbfaf"
 
+# Era 0 of the mainnet pre-Merge history, an era1 file used as it is, without unpacking.
+[archives."era1/mainnet-00000-5ec1ffb8"]
+source = "The era1 files of the Portal network history, at era1.ethportal.net"
+url = "https://era1.ethportal.net/mainnet-00000-5ec1ffb8.era1"
+size = 3891337
+sha256 = "9c3f42e0247d5503533f437ada2d44e7e9661170421c1b7844687c8dcfc0eb9b"
+
 # The pinned vector directories whose cases come from no repository, with their source.
 [other]
+"tests/cryptography/keystore" = "Unicode Character Database 16.0.0, UnicodeData.txt and NormalizationTest.txt"
 "tests/cryptography/hash_to_curve" = "RFC 9380, Appendices J.10.1, K.1 and K.2"
 "tests/cryptography/keccak" = "KeccakKAT-3.zip of the Keccak team, and the digest of abc"
 "tests/cryptography/sha256" = "NIST CAVP SHA256ShortMsg and SHA256LongMsg, and FIPS 180-2"
@@ -205,6 +246,7 @@ sha256 = "f59908e927db1e5ceefec3a4d224cc6434b1a0e24eb5a57c8f31fc1b157cbfaf"
 "tests/cryptography/sphincs" = "EthLib, and an independent implementation for the known answers"
 "tests/cryptography/xmss" = "EthLib, and an independent implementation for the known answers"
 "tests/consensus/pq_keys" = "Derived with the Python SSZ of ethereum/ssz-specs release v0.1.0, and EthLib for the proofs"
+"tests/serialization/ssz_limits" = "Derived with the Python SSZ of ethereum/ssz-specs release v0.1.0"
 "bindings/python/tests/aes/cavp" = "KAT_AES.zip, aesmct.zip and gcmtestvectors.zip of NIST CAVP"
 "bindings/python/tests/keccak/kat" = "KeccakKAT-3.zip of the Keccak team"
 "bindings/python/tests/sha256/cavp" = "shabytetestvectors.zip of NIST CAVP"

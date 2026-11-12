@@ -3,6 +3,7 @@ module
 public import EthLib.Consensus.Containers.Attestation
 public import EthLib.Consensus.Containers.Bid
 public import EthLib.Consensus.Containers.Block
+public import EthLib.Consensus.Containers.BuilderApi
 public import EthLib.Consensus.Containers.Builder
 public import EthLib.Consensus.Containers.Execution
 public import EthLib.Consensus.Containers.InclusionList
@@ -34,6 +35,10 @@ The static SSZ and Merkle proof exports take and return typed Python values.
 A name with no container at the fork comes back as code 0, since no error type covers it.
 
 From Glamsterdam on, a container whose form EthLib does not hold yet fails with code 0 too.
+
+Another export upgrades an attestation, indexed attestation or attester slashing of Fulu to Gloas.
+
+From Bellatrix to Fulu the names also cover the containers of the Builder API.
 -/
 
 public section
@@ -177,12 +182,34 @@ def containerOf (preset : Preset) (fork : Fork) : String → Option Container
     if .glamsterdam ≤ fork then some ⟨SignedProposerPreferences⟩ else none
   | "InclusionList" => if .hegota ≤ fork then some ⟨InclusionList⟩ else none
   | "SignedInclusionList" => if .hegota ≤ fork then some ⟨SignedInclusionList⟩ else none
+  | "ValidatorRegistrationV1" =>
+    if HasBuilderApi fork then some ⟨ValidatorRegistrationV1⟩ else none
+  | "SignedValidatorRegistrationV1" =>
+    if HasBuilderApi fork then some ⟨SignedValidatorRegistrationV1⟩ else none
+  | "BuilderBid" =>
+    if HasBuilderApi fork then some ⟨BuilderBid preset fork⟩ else none
+  | "SignedBuilderBid" =>
+    if HasBuilderApi fork then some ⟨SignedBuilderBid preset fork⟩ else none
+  | "BlindedBeaconBlockBody" =>
+    if HasBuilderApi fork then some ⟨BlindedBeaconBlockBody preset fork⟩ else none
+  | "BlindedBeaconBlock" =>
+    if HasBuilderApi fork then some ⟨BlindedBeaconBlock preset fork⟩ else none
+  | "SignedBlindedBeaconBlock" =>
+    if HasBuilderApi fork then some ⟨SignedBlindedBeaconBlock preset fork⟩ else none
+  | "BuilderRequestAuth" => if .glamsterdam ≤ fork then some ⟨BuilderRequestAuth⟩ else none
+  | "SignedBuilderRequestAuth" =>
+    if .glamsterdam ≤ fork then some ⟨SignedBuilderRequestAuth⟩ else none
+  | "BuilderPreferences" => if .glamsterdam ≤ fork then some ⟨BuilderPreferences⟩ else none
+  | "BuilderPreferencesRequest" =>
+    if .glamsterdam ≤ fork then some ⟨BuilderPreferencesRequest⟩ else none
   | _ => none
 
 /-- The containers whose form EthLib holds from Glamsterdam on.
 
 Gloas and Heze change some containers, and EthLib holds those forms only as specified. -/
 def specifiedFromGlamsterdam : List String := [
+  "BuilderRequestAuth", "SignedBuilderRequestAuth", "BuilderPreferences",
+  "BuilderPreferencesRequest",
   "Fork", "ForkData", "SigningData", "Checkpoint", "Validator", "AttestationData", "Eth1Data",
   "DepositMessage", "DepositData", "BeaconBlockHeader", "SignedBeaconBlockHeader", "Eth1Block",
   "ProposerSlashing", "Deposit", "VoluntaryExit", "SignedVoluntaryExit", "SingleAttestation",
@@ -259,6 +286,38 @@ The arguments are the name of the preset, the fork, the container, the bytes and
 The branch lists the sibling of each node on the path, from the node up to the root. -/
 @[export eth_consensus_merkle_proof]
 def merkleProofExport (args : PyValue) : Result PyValue := pyExport merkleProofOf args
+
+/-- The root and the bytes of the upgrade of the value that bytes encode. -/
+def upgradeToGloasOf {α β : Type} [SszType α] [SszType β] (upgrade : α → β) (data : ByteArray) :
+    Result (Root × ByteArray) := do
+  let post := upgrade (← runSsz "input rejected" (SszType.deserialize α data))
+  let root ← runSsz "root rejected" (SszType.hashTreeRoot post)
+  let bytes ← runSsz "value rejected" (SszType.serialize post)
+  return (root, bytes)
+
+/-- The Gloas form of an attestation, indexed attestation or attester slashing of Fulu. -/
+def upgradeOperationOf (args : String × String × ByteArray) : Result (Root × ByteArray) := do
+  let (name, type, data) := args
+  let preset ← presetOf name
+  match type with
+  | "Attestation" => upgradeToGloasOf (Attestation.upgradeToGloas (preset := preset)) data
+  | "IndexedAttestation" =>
+    upgradeToGloasOf (IndexedAttestation.upgradeToGloas (preset := preset)) data
+  | "AttesterSlashing" =>
+    upgradeToGloasOf (AttesterSlashing.upgradeToGloas (preset := preset)) data
+  | _ => throw (0, s!"no upgrade of {type} to Gloas")
+
+/-- The root and the bytes of the Gloas form of a container of Fulu, as a pair.
+
+The container is an attestation, an indexed attestation or an attester slashing.
+
+The arguments are the name of the preset, the container and its bytes at Fulu.
+
+The upgrade keeps every field and every element of a list.
+
+From Gloas the lists are progressive, and so are an attestation and its indexed form. -/
+@[export eth_consensus_upgrade_operation]
+def upgradeOperationExport (args : PyValue) : Result PyValue := pyExport upgradeOperationOf args
 
 /-- Whether the branch of a blob sidecar, given as bytes, climbs to the body root of its header. -/
 @[export eth_consensus_verify_blob_sidecar_inclusion_proof]

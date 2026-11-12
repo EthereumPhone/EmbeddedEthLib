@@ -125,7 +125,7 @@ theorem accessDelegation_codeHash_ne {evm after : Evm fork Meter} {address : Add
 theorem staticStep_skipCall {evm after : Evm fork Meter} {gas reservoir : Nat}
     (h : skipCall evm gas reservoir = .ok after) : StaticStep evm after := by
   obtain ⟨stack, -, rfl⟩ := skipCall_eq_ok h
-  exact ⟨StateKept.refl _, rfl, rfl, rfl, rfl⟩
+  exact ⟨StateKept.refl _, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- The caller that takes in a child has the state of the child. -/
 theorem state_incorporateChild (caller child : Evm fork Meter) :
@@ -144,6 +144,22 @@ theorem message_incorporateChild (caller child : Evm fork Meter) :
     (incorporateChild fork caller child).message = caller.message := by
   unfold incorporateChild
   split <;> rfl
+
+/-- The caller that takes in a child marks an address for deletion when one of two things holds.
+
+The caller marks it, or the child ends without an error and marks it. -/
+theorem mem_accountsToDelete_incorporateChild {caller child : Evm fork Meter} {address : Address} :
+    address ∈ (incorporateChild fork caller child).substate.accountsToDelete ↔
+      address ∈ caller.substate.accountsToDelete ∨
+        (child.error = none ∧ address ∈ child.substate.accountsToDelete) := by
+  unfold incorporateChild
+  split
+  · rename_i ok
+    rw [Std.ExtTreeSet.mem_insertMany_list, Option.isNone_iff_eq_none.mp ok]
+    simp
+  · rename_i failed
+    have : child.error ≠ none := fun h => failed (Option.isNone_iff_eq_none.mpr h)
+    simp [this]
 
 /-- A message whose code runs at an account that holds code, or whose code is empty. -/
 def StaticCode (state : State.TransactionState) (message : Message fork) : Prop :=
@@ -173,37 +189,10 @@ theorem getAccount_of_staticStep {a b : Evm fork Meter} (h : StaticStep a b)
 /-- A creation never completes in a static frame. -/
 theorem createStep_ne_ok_of_isStatic {create2 : Bool} {evm : Evm fork Meter}
     {result : StepResult fork Meter} (static : evm.message.isStatic = true) :
-    createStep create2 evm ≠ .ok result := by
-  intro h
-  unfold createStep at h
-  by_cases hs : fork ≥ .glamsterdam ∧ evm.message.isStatic = true
-  · simp only [hs, and_self, ↓reduceIte] at h
-    cases h
-  simp only [hs, ↓reduceIte] at h
-  obtain ⟨⟨_, e1⟩, h1, h⟩ := Base.bind_ok_iff.mp h
-  obtain ⟨⟨_, e2⟩, h2, h⟩ := Base.bind_ok_iff.mp h
-  obtain ⟨⟨_, e3⟩, h3, h⟩ := Base.bind_ok_iff.mp h
-  obtain ⟨⟨_, e4⟩, h4, h⟩ := Base.bind_ok_iff.mp h
-  obtain ⟨e5, h5, h⟩ := Base.bind_ok_iff.mp h
-  have m4 : e4.message = e3.message := by
-    unfold popSalt at h4
-    split at h4
-    · obtain ⟨⟨_, _⟩, hp, h4⟩ := Base.bind_ok_iff.mp h4
-      cases h4
-      exact (popWord_sameContext hp).message
-    · cases h4
-      rfl
-  have m5 : e5.message = evm.message :=
-    (chargeGasAndMemory_sameContext h5).message.trans (m4.trans
-      ((popWord_sameContext h3).message.trans ((popWord_sameContext h2).message.trans
-        (popWord_sameContext h1).message)))
-  unfold genericCreate at h
-  split at h
-  · cases h
-  · split at h
-    · cases h
-    · rw [m5] at *
-      simp [static] at *
+    createStep create2 evm ≠ .ok result := fun h => by
+  obtain ⟨-, -, -, -, -, -, -, -, -, notStatic, -, -⟩ := createStep_eq_ok h
+  rw [static] at notStatic
+  cases notStatic
 
 /-- A frame that runs a static message.
 

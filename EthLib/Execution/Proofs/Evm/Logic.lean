@@ -9,6 +9,7 @@ public import EthLib.Execution.Proofs.Evm.Logic.Message
 public import EthLib.Execution.Proofs.Evm.Logic.FailsOn
 public import EthLib.Execution.Proofs.Evm.Logic.Route
 public import EthLib.Execution.Proofs.Evm.Logic.Call
+public import EthLib.Execution.Proofs.Evm.Logic.CallSteps
 public import EthLib.Execution.Proofs.Evm.Logic.Keeps
 public import EthLib.Execution.Proofs.Evm.Logic.Log
 public import EthLib.Execution.Proofs.Evm.Logic.Static
@@ -31,6 +32,8 @@ public import EthLib.Execution.Proofs.Evm.Logic.RunMono
 public import EthLib.Execution.Proofs.Evm.Logic.NoAbort
 public import EthLib.Execution.Proofs.Evm.Logic.Fault
 public import EthLib.Execution.Proofs.Evm.Logic.LessGas
+public import EthLib.Execution.Proofs.Evm.Logic.RunsOk
+public import EthLib.Execution.Proofs.Evm.Logic.Marks
 
 /-!
 # `EthLib.Execution.Proofs.Evm.Logic`
@@ -52,4 +55,8 @@ A rule for calls in that form also follows an EIP-7702 delegation to the code of
 A code can be stored as one number, and a tactic steps through its opcodes.
 
 By steps monotone in gas, a run with less gas follows the run with more gas, or it fails.
+
+A specification to frames with no error gives a run that succeeds.
+
+Over steps monotone in gas, a specification to a halt fixes the end of every run that succeeds.
 -/

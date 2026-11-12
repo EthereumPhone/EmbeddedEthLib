@@ -1,12 +1,15 @@
 module
 
+public import EthLib.Base.BigEndian
+public import EthLib.Base.ChainConfig
+public import EthLib.Cryptography.Hash.Keccak
 public import EthLib.Engine.Json
 public import EthLib.Execution.Blocks.Withdrawal
 
 /-!
 # `Engine.ForkchoiceUpdated`
 
-The choice of the head in `engine_forkchoiceUpdated`, versions 1 to 3, without a payload build.
+The choice of the head in `engine_forkchoiceUpdated`, versions 1 to 4, without a payload build.
 
 The consensus layer names a head, a safe block and a finalized block.
 
@@ -38,16 +41,95 @@ The parameters are the forkchoice state, with exactly its three fields, and the 
 
 The payload attributes are an object or `null`; any other value is an invalid parameter.
 
-Payload attributes start a payload build only when the update selects a new valid head.
+From version 4 the custody columns may follow, as 16 bytes or `null`.
 
-That build is not specified here, so such a request is refused.
+Any other value of them is an invalid parameter.
 
-With any other answer no build begins, so attributes that are an object or `null` change nothing.
+EIP-8070 and the OpenRPC description of the method make them optional.
+
+So version 4 also takes two parameters.
+
+That description also makes the payload attributes optional in every version.
+
+This model still asks for them, as `null` when there are none.
+
+The source runs the update of the custody set apart from the forkchoice update.
+
+So custody columns that decode never change the answer.
+
+Payload attributes count only when the update applies a valid head.
+
+They must then have the fields of a version of their structure that the method takes.
+
+A field whose value is `null` counts as absent.
+
+Otherwise the error is `-38003`, invalid payload attributes.
+
+A field of the right name with a value of the wrong form also gives `-38003`.
+
+Versions 2, 3 and 4 name `-38003` for a structure that the method does not take.
+
+Version 1 names no code for that case.
+
+This model gives it `-38003` too, the answer that step 9 of version 1 gives for invalid attributes.
+
+Step 8 of version 1 keeps the forkchoice state applied after that error.
+
+This model holds no state, so the error carries no head.
+
+Versions 1, 3 and 4 of the method each take the version of the structure with their own number.
+
+Version 2 takes versions 1 and 2 of the structure.
+
+The fork of the attributes is the active fork at the number after the head and at their timestamp.
+
+Each version takes some forks only, and gives `-38005` for attributes of another fork.
+
+Version 1 takes Paris, and version 2 Paris and Shapella.
+
+Version 3 takes the forks from Dencun on, before Glamsterdam, and version 4 takes Glamsterdam.
+
+The update by Cancun ends version 2 at Dencun.
+
+The update by Prague extends version 3 to Pectra, and names only Cancun and Prague.
+
+No update by Osaka names version 3, yet the update by Amsterdam ends it at Glamsterdam.
+
+So this model lets version 3 take Fusaka and the BPO forks too, as `engine_newPayloadV4` does.
+
+The source gives version 1 no rule of forks, and step 2 of version 2 sends Shapella to version 2.
+
+So this model takes Paris only for version 1, as version 1 of `engine_newPayload` does.
+
+Version 2 takes version 1 of the structure only before Shapella, and version 2 only from it.
+
+Otherwise the error is `-38003`.
+
+By step 8.1 of version 1, the timestamp of the attributes must be above that of the head.
+
+Otherwise the error is `-38003` too.
+
+The checks run in this order: the structure, the fork, the structure at the fork, the timestamp.
+
+The source does not order the fork check and step 8.1, and this model runs the fork check first.
+
+All these checks run only when the update applies a valid head, as step 8 of version 1 says.
+
+Attributes that pass start a payload build, and the response names it by its ID.
+
+The model returns the attributes, as those of their fork.
+
+When the update applies no valid head, no build begins, so the attributes change nothing.
 
 The method specifications state these rules, at commit `3284ee8` of execution-apis:
 
 - [`engine_forkchoiceUpdatedV1`][v1], steps 2, 4, 5, 7, 8 and 9
 - [`engine_forkchoiceUpdatedV2`][v2] and [`engine_forkchoiceUpdatedV3`][v3]
+- [`engine_forkchoiceUpdatedV4`][v4], and the custody columns of [EIP-8070][eip8070]
+- the updates of earlier versions by [Cancun][v2-cancun] and [Prague][v3-prague]
+- the update of earlier versions by [Osaka][osaka], which leaves version 3 unchanged
+- the update of version 3 by [Amsterdam][v3-amsterdam]
+- the [OpenRPC description][rpc] of the four versions, for the parameters that each requires
 
 Each version has its payload attributes: [version 1][a1], [version 2][a2] and [version 3][a3].
 
@@ -56,6 +138,13 @@ From Glamsterdam, [version 4][a4] adds the slot number of EIP-7843 and a target 
 [v1]: https://github.com/ethereum/execution-apis/blob/3284ee80c3da3e516c53782dde75157cccf1ebdc/src/engine/paris.md#engine_forkchoiceupdatedv1
 [v2]: https://github.com/ethereum/execution-apis/blob/3284ee80c3da3e516c53782dde75157cccf1ebdc/src/engine/shanghai.md#engine_forkchoiceupdatedv2
 [v3]: https://github.com/ethereum/execution-apis/blob/3284ee80c3da3e516c53782dde75157cccf1ebdc/src/engine/cancun.md#engine_forkchoiceupdatedv3
+[v4]: https://github.com/ethereum/execution-apis/blob/3284ee80c3da3e516c53782dde75157cccf1ebdc/src/engine/amsterdam.md#engine_forkchoiceupdatedv4
+[v2-cancun]: https://github.com/ethereum/execution-apis/blob/3284ee80c3da3e516c53782dde75157cccf1ebdc/src/engine/cancun.md#update-the-methods-of-previous-forks
+[v3-prague]: https://github.com/ethereum/execution-apis/blob/3284ee80c3da3e516c53782dde75157cccf1ebdc/src/engine/prague.md#update-the-methods-of-previous-forks
+[osaka]: https://github.com/ethereum/execution-apis/blob/3284ee80c3da3e516c53782dde75157cccf1ebdc/src/engine/osaka.md#update-the-methods-of-previous-forks
+[v3-amsterdam]: https://github.com/ethereum/execution-apis/blob/3284ee80c3da3e516c53782dde75157cccf1ebdc/src/engine/amsterdam.md#update-the-methods-of-previous-forks
+[eip8070]: https://github.com/ethereum/EIPs/blob/46976b2a9bf99f727fb87dc8c809e3a3cdc6b445/EIPS/eip-8070.md#engine-api-extensions
+[rpc]: https://github.com/ethereum/execution-apis/blob/3284ee80c3da3e516c53782dde75157cccf1ebdc/src/engine/openrpc/methods/forkchoice.yaml
 [a1]: https://github.com/ethereum/execution-apis/blob/3284ee80c3da3e516c53782dde75157cccf1ebdc/src/engine/paris.md#payloadattributesv1
 [a2]: https://github.com/ethereum/execution-apis/blob/3284ee80c3da3e516c53782dde75157cccf1ebdc/src/engine/shanghai.md#payloadattributesv2
 [a3]: https://github.com/ethereum/execution-apis/blob/3284ee80c3da3e516c53782dde75157cccf1ebdc/src/engine/cancun.md#payloadattributesv3
@@ -88,12 +177,16 @@ structure PayloadAttributes (fork : Fork) : Type where
   /-- The target of the gas limit of the payload, from Glamsterdam. -/
   targetGasLimit : Since .glamsterdam fork UInt64
 
-/-- A payload that the execution layer holds: its parent and whether it is valid. -/
+/-- A payload that the execution layer holds: its parent, its validity, its number and its time. -/
 structure KnownPayload where
   /-- The block hash of the parent. -/
   parentHash : Hash32
   /-- Whether the payload and its ancestors are valid. -/
   valid : Bool
+  /-- The number of the block. -/
+  number : UInt64
+  /-- The time of the block, in seconds since the Unix epoch. -/
+  timestamp : UInt64
   deriving DecidableEq, Repr
 
 /-- The payloads that the execution layer holds, by block hash. -/
@@ -159,20 +252,271 @@ def forkchoiceStateOfJson (j : Json) : Decode ForkchoiceState := do
     safeBlockHash := ← fixed "safeBlockHash" 32 (← get "safeBlockHash")
     finalizedBlockHash := ← fixed "finalizedBlockHash" 32 (← get "finalizedBlockHash") }
 
-/-- The parameters of a version of the method: the forkchoice state, then the payload attributes.
+/-- The fields of version 1 of the payload attributes. -/
+def attributesFieldsV1 : List String := ["timestamp", "prevRandao", "suggestedFeeRecipient"]
 
-The attributes are an object or `null`, as the method types them; any other value is invalid.
+/-- The fields of version 2: those of version 1, and the withdrawals. -/
+def attributesFieldsV2 : List String := attributesFieldsV1 ++ ["withdrawals"]
 
-The source checks their fields only on a new valid head, where this model refuses the build.
+/-- The fields of version 3: those of version 2, and the root of the parent beacon block. -/
+def attributesFieldsV3 : List String := attributesFieldsV2 ++ ["parentBeaconBlockRoot"]
 
-It returns the state, and whether the attributes are an object. -/
-def forkchoiceUpdatedParams (params : Json) : Decode (ForkchoiceState × Bool) := do
-  let .arr items := params | invalid "params: not an array"
-  let [state, attributes] := items.toList | invalid "params: not 2 values"
+/-- The fields of version 4: those of version 3, the slot number and the target gas limit. -/
+def attributesFieldsV4 : List String := attributesFieldsV3 ++ ["slotNumber", "targetGasLimit"]
+
+/-- The fields of a version of the payload attributes, from 1 to 4.
+
+Version 0 reads as 1, and a version above 4 reads as 4. -/
+def attributesFields : Nat → List String
+  | 0 | 1 => attributesFieldsV1
+  | 2 => attributesFieldsV2
+  | 3 => attributesFieldsV3
+  | _ => attributesFieldsV4
+
+/-- The fork whose payload attributes have the fields of a version of their structure.
+
+Version 1 is that of Paris, 2 of Shapella, 3 of Dencun and 4 of Glamsterdam.
+
+Version 0 reads as 1, and a version above 4 reads as 4. -/
+def attributesFork : Nat → Fork
+  | 0 | 1 => .paris
+  | 2 => .shapella
+  | 3 => .dencun
+  | _ => .glamsterdam
+
+/-- The value of a field of an object, decoded by `f`, or none when the object lacks it. -/
+def optionalField {α : Type} (fs : List (String × Json)) (name : String)
+    (f : Json → Decode α) : Decode (Option α) :=
+  match fs.lookup name with
+  | some v => some <$> f v
+  | none => pure none
+
+/-- Payload attributes with exactly the fields of a version of their structure.
+
+A field whose value is `null` counts as absent.
+
+Each field holds a value of its type.
+
+The attributes are those of the fork of that version. -/
+def payloadAttributesOfJson (version : Nat) (j : Json) :
+    Decode (PayloadAttributes (attributesFork version)) := do
+  let fs ← fields "payloadAttributes" j
+  unless hasExactly fs (attributesFields version) do invalid "payloadAttributes: wrong fields"
+  let get := field "payloadAttributes" fs
+  return {
+    timestamp := ← uint64 "timestamp" (← get "timestamp")
+    prevRandao := ← fixed "prevRandao" 32 (← get "prevRandao")
+    suggestedFeeRecipient := ← address "suggestedFeeRecipient" (← get "suggestedFeeRecipient")
+    withdrawals := ← since "withdrawals"
+      (← optionalField fs "withdrawals" (array "withdrawals" withdrawal))
+    parentBeaconBlockRoot := ← since "parentBeaconBlockRoot"
+      (← optionalField fs "parentBeaconBlockRoot" (fixed "parentBeaconBlockRoot" 32))
+    slotNumber := ← since "slotNumber" (← optionalField fs "slotNumber" (uint64 "slotNumber"))
+    targetGasLimit := ← since "targetGasLimit"
+      (← optionalField fs "targetGasLimit" (uint64 "targetGasLimit")) }
+
+/-- The versions of the structure of the payload attributes that a version of the method takes.
+
+Version 2 takes versions 1 and 2, and the fork of the timestamp then picks one of them.
+
+Any other version takes its own number. -/
+def attributesVersions : Nat → List Nat
+  | 2 => [1, 2]
+  | version => [version]
+
+/-- The payload attributes that a version of the method takes, with the fork of their structure.
+
+The first structure that fits gives them.
+
+Attributes that fit no structure that the method takes are invalid payload attributes. -/
+def payloadAttributesOfVersion (version : Nat) (j : Json) :
+    Except EngineError (Σ fork, PayloadAttributes fork) :=
+  match (attributesVersions version).findSome?
+      (fun v => (payloadAttributesOfJson v j).toOption.map fun a => ⟨attributesFork v, a⟩) with
+  | some attributes => .ok attributes
+  | none => .error .invalidPayloadAttributes
+
+/-- The custody columns of version 4: 16 bytes, one bit for each column.
+
+They are `null` when the consensus layer gives no custody set. -/
+def custodyColumnsOfJson : Json → Decode (Option (Vector UInt8 16))
+  | .null => pure none
+  | j => some <$> fixed "custodyColumns" 16 j
+
+/-- The parameters of a version of the method.
+
+They are the forkchoice state, then the payload attributes, an object or `null`.
+
+From version 4 the custody columns may follow, as 16 bytes or `null`.
+
+The source checks the fields of the attributes only when a valid head is applied.
+
+The result is the state, and the attributes when they are an object. -/
+def forkchoiceUpdatedParams (version : Nat) (params : Json) :
+    Decode (ForkchoiceState × Option Json) := do
+  let params ← paramsArray params
+  let (state, attributes, custody) ← match params, decide (4 ≤ version) with
+    | [state, attributes], _ => pure (state, attributes, Json.null)
+    | [state, attributes, custody], true => pure (state, attributes, custody)
+    | _, four => invalid s!"params: got {params.length}, expected {if four then "2 or 3" else "2"}"
   let state ← forkchoiceStateOfJson state
-  match attributes with
-  | .null => return (state, false)
-  | .obj _ => return (state, true)
-  | _ => invalid "payloadAttributes: not an object"
+  let attributes ← match attributes with
+    | .null => pure none
+    | .obj kvs => pure (some (Json.obj kvs))
+    | _ => invalid "payloadAttributes: not an object"
+  -- The custody set changes the blob pool only, never the answer, so its value is dropped.
+  let _ ← custodyColumnsOfJson custody
+  return (state, attributes)
+
+/-- Whether a version of the method takes payload attributes whose timestamp is in a fork.
+
+Version 1 takes Paris, and version 2 Paris and Shapella.
+
+Version 3 takes the forks from Dencun on, before Glamsterdam.
+
+Version 4 takes Glamsterdam.
+
+Version 0 reads as 1, and a version above 4 reads as 4. -/
+def attributesTakeFork : Nat → Fork → Bool
+  | 0, fork | 1, fork => fork == .paris
+  | 2, fork => fork == .paris || fork == .shapella
+  | 3, fork => decide (.dencun ≤ fork) && decide (fork < .glamsterdam)
+  | _, fork => fork == .glamsterdam
+
+/-- The fork of the structure of the payload attributes whose timestamp is in a fork.
+
+Before Shapella it is Paris, then Shapella before Dencun, then Dencun before Glamsterdam.
+
+From Glamsterdam it is Glamsterdam. -/
+def attributesForkAt (fork : Fork) : Fork :=
+  if fork < .shapella then .paris
+  else if fork < .dencun then .shapella
+  else if fork < .glamsterdam then .dencun
+  else .glamsterdam
+
+/-- The fork of the structure has the withdrawals exactly when the fork has them. -/
+theorem shapella_le_attributesForkAt_iff (fork : Fork) :
+    .shapella ≤ attributesForkAt fork ↔ .shapella ≤ fork := by
+  cases fork <;> decide
+
+/-- The fork of the structure has the parent beacon block root exactly when the fork has it. -/
+theorem dencun_le_attributesForkAt_iff (fork : Fork) :
+    .dencun ≤ attributesForkAt fork ↔ .dencun ≤ fork := by
+  cases fork <;> decide
+
+/-- The fork of the structure has the slot number exactly when the fork has it. -/
+theorem glamsterdam_le_attributesForkAt_iff (fork : Fork) :
+    .glamsterdam ≤ attributesForkAt fork ↔ .glamsterdam ≤ fork := by
+  cases fork <;> decide
+
+/-- Payload attributes of the structure of a fork, as attributes of that fork, field by field. -/
+def PayloadAttributes.ofStructure {fork : Fork} (a : PayloadAttributes (attributesForkAt fork)) :
+    PayloadAttributes fork where
+  timestamp := a.timestamp
+  prevRandao := a.prevRandao
+  suggestedFeeRecipient := a.suggestedFeeRecipient
+  withdrawals := a.withdrawals.congr (shapella_le_attributesForkAt_iff fork)
+  parentBeaconBlockRoot := a.parentBeaconBlockRoot.congr (dencun_le_attributesForkAt_iff fork)
+  slotNumber := a.slotNumber.congr (glamsterdam_le_attributesForkAt_iff fork)
+  targetGasLimit := a.targetGasLimit.congr (glamsterdam_le_attributesForkAt_iff fork)
+
+/-- Payload attributes at a fork, when their structure is that of the fork.
+
+Otherwise there are none. -/
+def PayloadAttributes.atFork (a : Σ f, PayloadAttributes f) (fork : Fork) :
+    Option (PayloadAttributes fork) :=
+  if h : attributesForkAt fork = a.1 then some (PayloadAttributes.ofStructure (h ▸ a.2)) else none
+
+/-- The checks of decoded payload attributes against the head that they build on.
+
+The fork of the attributes is the active fork at the number after the head and at their timestamp.
+
+A version of the method that does not take that fork gives `-38005`, as do attributes of no fork.
+
+Attributes whose structure is not that of the fork give `-38003`.
+
+Only version 2 can fail that way, since each other version takes a single structure.
+
+Attributes whose timestamp is not above that of the head give `-38003` too.
+
+The result is the attributes at their fork. -/
+def checkAttributes (config : ChainConfig) (version : Nat) (head : KnownPayload)
+    (attributes : Σ f, PayloadAttributes f) :
+    Except EngineError (Σ fork, PayloadAttributes fork) := do
+  let timestamp := attributes.2.timestamp
+  let some fork := config.activeFork (head.number.toNat + 1) timestamp.toNat
+    | throw .unsupportedFork
+  unless attributesTakeFork version fork do throw .unsupportedFork
+  let some atFork := PayloadAttributes.atFork attributes fork | throw .invalidPayloadAttributes
+  unless head.timestamp < timestamp do throw .invalidPayloadAttributes
+  return ⟨fork, atFork⟩
+
+/-- A version of the method: its status, the new head, and the payload attributes of a build.
+
+Attributes count only when a valid head is applied.
+
+They must then fit a structure of the version, and then pass the checks against the head.
+
+The attributes of a build are those of the fork of their timestamp.
+
+The versions of the method are 1 to 4; the C export passes no other.
+
+Version 0 reads as 1, and a version above 4 reads as 4. -/
+def forkchoiceUpdatedCall (config : ChainConfig) (version : Nat) (tree : PayloadTree)
+    (finalized : Option Hash32) (params : Json) :
+    Except EngineError
+      (PayloadStatus × Option Hash32 × Option (Σ fork, PayloadAttributes fork)) := do
+  let (state, attributes) ← forkchoiceUpdatedParams version params
+  let (status, head) ← forkchoiceUpdated tree finalized state
+  match attributes, head with
+  | some j, some h =>
+    let decoded ← payloadAttributesOfVersion version j
+    -- The update applies only a head that the tree holds, so this branch never runs.
+    let some known := tree.lookup h | return (status, head, none)
+    return (status, head, some (← checkAttributes config version known decoded))
+  | _, _ => return (status, head, none)
+
+/-- The bytes that the ID of a build hashes: the head, then the attributes in order.
+
+The attributes are those of their fork: the timestamp, the RANDAO mix and the fee recipient first.
+
+The withdrawals follow from Shapella, the parent beacon block root from Dencun.
+
+The slot and the target gas limit follow from Glamsterdam.
+
+Each number takes 8 big-endian bytes, and each withdrawal its four fields in turn. -/
+def payloadIdInput (head : Hash32) (attributes : PayloadAttributes fork) : ByteArray :=
+  let word (n : UInt64) : List UInt8 := Base.natToBytes 8 n.toNat
+  let withdrawals : List UInt8 := if h : .shapella ≤ fork then
+      (attributes.withdrawals h).flatMap fun w =>
+        word w.index ++ word w.validatorIndex ++ w.address.toList ++ word w.amount
+    else []
+  let beacon : List UInt8 :=
+    if h : .dencun ≤ fork then (attributes.parentBeaconBlockRoot h).toList else []
+  let glamsterdam : List UInt8 := if h : .glamsterdam ≤ fork then
+      word (attributes.slotNumber h) ++ word (attributes.targetGasLimit h)
+    else []
+  ⟨(head.toList ++ word attributes.timestamp ++ attributes.prevRandao.toList ++
+    attributes.suggestedFeeRecipient.toList ++ withdrawals ++ beacon ++ glamsterdam).toArray⟩
+
+/-- The ID of the build that attributes start on a head: the first 8 bytes of a Keccak-256 hash.
+
+The source asks that each new build has its own ID, and leaves the rest to the execution layer.
+
+The same head and attributes give the same ID.
+
+In an update, the configuration, the tree, the head and the timestamp fix the fork.
+
+So within an update, other attributes or another head give other bytes to hash.
+
+So within an update, distinct builds get distinct IDs unless their hashes share the first 8 bytes.
+
+The hash is that of the head and then the attributes, each number in 8 big-endian bytes. -/
+def payloadId (head : Hash32) (attributes : PayloadAttributes fork) : PayloadId :=
+  let digest := Cryptography.Hash.Keccak.keccak256 (payloadIdInput head attributes)
+  Vector.ofFn fun i => digest[i.val]'(by
+    have := i.isLt
+    simp only [Cryptography.Hash.Keccak.DIGEST_LEN]
+    omega)
 
 end EthLib.Engine
